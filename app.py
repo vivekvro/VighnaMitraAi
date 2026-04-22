@@ -10,20 +10,33 @@ from src.user_auth import (
     )
 from langgraph.checkpoint.sqlite import SqliteSaver
 from sqlite3 import connect
-from src.chatbots.chatbot_graph1 import base_chatbot
+from src.chatbots.chatbot_graphs import base_chatbot
 from langchain_core.messages import HumanMessage
 from src.rag.DocumentsLoader import  load_tempfile_path
 import requests
 from dotenv import load_dotenv
-from langchain_community.vectorstores import FAISS
+
+load_dotenv()
 
 
 
+
+db_path = "data/vighnamitraai.db"
 
 URL_MAIN = os.getenv("MAIN_URL")
+URL_upload_document = URL_MAIN+"/vm/upload_document"
 
 
-URL_upload_document = URL_MAIN+"vm/upload_document"
+chatbot = base_chatbot()
+
+
+
+
+
+
+
+
+
 
 def create_timestamp(db_path):
     with connect(db_path) as con:
@@ -48,7 +61,6 @@ def create_timestamp(db_path):
             """)
 
 
-db_path = "data/vighnamitraai.db"
 
 
 
@@ -56,7 +68,7 @@ db_path = "data/vighnamitraai.db"
 create_accounts_info_table(db_path=db_path)
 
 
-chatbot = base_chatbot()
+
 create_timestamp(db_path)
 
 def validate_username(username: str):
@@ -169,6 +181,9 @@ if "user" not in st.session_state:
             
     st.stop()
 
+
+
+
 def get_all_threads(db_path, user):
     if not os.path.exists(db_path):
         return []
@@ -263,29 +278,56 @@ elif sidebar_sections == "attach documents":
         "select document type", ["pdf", "txt", "url"], width=200
     )
 
+    file_details = None  # initialize
+
     if doctype in ["pdf", "txt"]:
         uploaded = st.sidebar.file_uploader(
             "upload here", type=["pdf", "txt"], width=200
         )
-        path = load_tempfile_path(uploaded)
-
-        if path is not None:
+        
+        if uploaded is not None:
+            path = load_tempfile_path(uploaded)
             file_details = {
-                "path":path,
-                "doctype":doctype
-                }
-            st.sidebar.success("File uploaded ✅")
+                "path": path,
+                "doctype": doctype,
+                "user_id": username
+            }
+            
 
     else:
-        path = st.sidebar.text_input("enter url: ", width=200)
-        if path is not None:
+        path = st.sidebar.text_input("Enter URL:", width=200)
+        
+        if path:
             file_details = {
-                "path":path,
-                "doctype":doctype
+                "path": path,
+                "doctype": doctype,
+                "user_id": username
             }
-    if st.sidebar.button("upload"):
-        with st.sidebar.spinner("uploading....."):
-            response = requests.post()
+    if st.sidebar.button("Upload"):
+        if file_details is None:
+            st.sidebar.warning("Please upload a file or enter a URL first ⚠️")
+        else:
+            with st.sidebar.spinner("Uploading..."):
+
+                try:
+                    if doctype in ["pdf", "txt"]:
+
+                        if uploaded is not None:
+                            path = load_tempfile_path(uploaded)
+                            file_details = {
+                                "path": path,
+                                "doctype": doctype,
+                                "user_id": username
+                            }
+                    response = requests.post(
+                        url=URL_upload_document,
+                        json=file_details,
+                    )
+                    result = response.json()
+                    st.sidebar.success(result['response'])
+                except Exception as e:
+                    st.sidebar.error(str(e))
+
 
 
 elif sidebar_sections == "connectors":
@@ -316,7 +358,11 @@ if st.sidebar.button("logout"):
         del st.session_state["user"]
     st.rerun()
 
-config = {"configurable":{"thread_id":st.session_state['user']['chat_id']}}
+config = {"configurable":{
+            "user_id":username,
+            "thread_id":st.session_state['user']['chat_id']
+        }
+    }
 
 
 
@@ -334,6 +380,8 @@ for msg in get_messages(config):
 
 user_input = st.chat_input("Ask Anything")
 
+
+
 def fake_stream_response(text:str):
     for char in text:
         yield char
@@ -344,6 +392,17 @@ if user_input:
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        result_state = chatbot.invoke({"messages":[HumanMessage(content=user_input)]},config=config)
+        result_state = chatbot.invoke({
+            "messages":[HumanMessage(content=user_input)],
+            "trace":[]
+            },config=config)
+
+        
+
     with st.chat_message(name="assistant"):
+        if "trace" in result_state:# 👇 Process tracer
+            with st.expander("⚙️ Execution Trace"):
+                for step in result_state["trace"]:
+                    st.write(step)
         st.write_stream(fake_stream_response(result_state['messages'][-1].content))
+

@@ -2,6 +2,7 @@ from pydantic import Field
 from typing import Literal,TypedDict,Annotated,Dict,List,Any
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+from langchain_community.vectorstores import VectorStore
 
 
 
@@ -15,14 +16,10 @@ class BaseChatState(TypedDict):
 class SummaryState(TypedDict):
     summary :Annotated[str,Field(description="Summary of the chat history.")]
 
-class RagState(TypedDict):
-    retriever:Any
-    sources:List
 
 
 
 
 
-
-class ChatBotState(BaseChatState,SummaryState,RagState):
-    pass
+class ChatBotState(BaseChatState,SummaryState):
+    trace:List[str]=Field(default_factory=list,description="in this add used tools and nodes.")
