@@ -22,27 +22,12 @@ class DocLoader:
         self.doctype = doctype
         self.path = path
         if not all([self.doctype,self.path]):
-            raise ValueError("Please pass the required parameters [doctype,embeddings,uploaded_file_path]")
+            raise ValueError("Please pass the required parameters [doctype,path]")
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
     def load(self):
-        separators = [
-                    "\n\n",              # paragraphs
-                    "\nclass ",          # class definitions
-                    "\ndef ",            # function definitions
-                    "\nif ", "\nfor ", "\nwhile ",  # control blocks
-                    "\n\n#",             # comments (Python style)
-                    "\n//", "\n/*",      # C/C++/JS comments
-                    "\n",                # lines
-                    r"\n\d+\.",          # numbered lists
-                    r"\n•",              # bullet points
-                    ".", "?", "!",       # sentences
-                    ";", ":",            # clauses
-                    ",",                 # small pauses
-                    " ",                 # words
-                    ""                   # fallback
-                ]
+        separators = ["\n\n", "\n", ".", " "]
         splitter =  RecursiveCharacterTextSplitter(
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
@@ -58,7 +43,6 @@ class DocLoader:
                     loader = TextLoader(file_path=self.path)
                     doc =  loader.load()
             elif self.doctype=="url":
-                path = self.uploaded_file_path
                 loader = WebBaseLoader(web_path=self.path)
                 doc =   loader.load()
 

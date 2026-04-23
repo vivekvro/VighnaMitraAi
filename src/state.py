@@ -3,6 +3,8 @@ from typing import Literal,TypedDict,Annotated,Dict,List,Any
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from langchain_community.vectorstores import VectorStore
+from operator import add
+
 
 
 

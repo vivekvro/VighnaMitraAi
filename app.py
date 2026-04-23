@@ -8,11 +8,13 @@ from src.user_auth import (
     check_if_user_exists,
     fetch_password_by_username
     )
+from src.rag.retrievers import update_vectorstore
+
 from langgraph.checkpoint.sqlite import SqliteSaver
 from sqlite3 import connect
 from src.chatbots.chatbot_graphs import base_chatbot
 from langchain_core.messages import HumanMessage
-from src.rag.DocumentsLoader import  load_tempfile_path
+from src.rag.DocumentsLoader import  load_tempfile_path,DocLoader
 import requests
 from dotenv import load_dotenv
 
@@ -128,14 +130,16 @@ if "user" not in st.session_state:
         confirm_password = st.text_input("Confirm Password", type="password")
         if st.button("**SignUp**"):
             try:
+                validate_username(username=username)
+                validate_email(email=email)
                 if check_if_user_exists(username,db_path):
                     st.error("User already exists!")
                     st.stop()
                 if check_if_email_exists(email,db_path):
                     st.error("Email already exists!")
                     st.stop()
-                validate_username(username=username)
-                validate_email(email=email)
+                
+                
                 if not validate_password(pw=password):
                     st.error("Password must contain:\n- Minimum 8 characters\n- At least 1 uppercase letter (A-Z)\n- At least 1 lowercase letter (a-z)\n- At least 1 number (0-9)\n- At least 1 special character (!@#$%^&*)")
                     st.stop()
@@ -278,55 +282,44 @@ elif sidebar_sections == "attach documents":
         "select document type", ["pdf", "txt", "url"], width=200
     )
 
-    file_details = None  # initialize
-
+   
     if doctype in ["pdf", "txt"]:
-        uploaded = st.sidebar.file_uploader(
-            "upload here", type=["pdf", "txt"], width=200
+        temp_path = None
+        uploaded_file = st.sidebar.file_uploader(
+            "upload here", type=["pdf", "txt"]
         )
-        
-        if uploaded is not None:
-            path = load_tempfile_path(uploaded)
-            file_details = {
-                "path": path,
-                "doctype": doctype,
-                "user_id": username
-            }
-            
 
     else:
-        path = st.sidebar.text_input("Enter URL:", width=200)
-        
-        if path:
-            file_details = {
-                "path": path,
-                "doctype": doctype,
-                "user_id": username
-            }
+        uploaded_file = st.sidebar.text_input("Enter URL:")
+
     if st.sidebar.button("Upload"):
-        if file_details is None:
-            st.sidebar.warning("Please upload a file or enter a URL first ⚠️")
-        else:
-            with st.sidebar.spinner("Uploading..."):
+        
+        with st.sidebar.spinner("Uploading..."):
 
                 try:
-                    if doctype in ["pdf", "txt"]:
-
-                        if uploaded is not None:
-                            path = load_tempfile_path(uploaded)
-                            file_details = {
-                                "path": path,
-                                "doctype": doctype,
-                                "user_id": username
-                            }
-                    response = requests.post(
-                        url=URL_upload_document,
-                        json=file_details,
-                    )
-                    result = response.json()
-                    st.sidebar.success(result['response'])
+                    
+                    if doctype in ["pdf","txt"]:
+                        path = load_tempfile_path(uploaded_file)
+                        loader = DocLoader(doctype=doctype,path=path)
+                        docs = loader.load()
+                        if not update_vectorstore(docs=docs,user_id=st.session_state['user']['username']):
+                            st.sidebar.error("Upload failed")
+                            os.remove(path)
+                        else :
+                            st.sidebar.success("Uploaded Successfully")
+                            os.remove(path)
+                    elif doctype =="url":
+                        path = uploaded_file
+                        loader = DocLoader(doctype=doctype,path=path)
+                        docs = loader.load()
+                        if not update_vectorstore(docs=docs,user_id=st.session_state['user']['username']):
+                            st.sidebar.error("Upload failed")
+                        else :
+                            st.sidebar.success("Uploaded Successfully")
+                    
                 except Exception as e:
                     st.sidebar.error(str(e))
+                
 
 
 

@@ -6,8 +6,16 @@ from langchain_core.messages import SystemMessage,AIMessage,RemoveMessage,HumanM
 from sqlite3 import connect
 from  psycopg import connect as postgres_connect
 from langgraph.store.postgres import PostgresStore
-from src.chatbots.nodes import chat_node,remember_node,summarize_conversation,retriever_node
-from src.chatbots.node_condtions import need_rag_condition,conversation_summarize_condition
+from src.chatbots.nodes import (
+    chat_node,remember_node,
+    summarize_conversation,
+    retriever_node,remember_pass_node
+    )
+from src.chatbots.node_condtions import (
+    need_rag_condition,
+    conversation_summarize_condition,
+    need_remember_condition
+    )
 import os,dotenv
 
 dotenv.load_dotenv()
@@ -41,12 +49,16 @@ def base_chatbot():
     store
 
     builder_graph= StateGraph(ChatBotState)
-
+    
     builder_graph.add_node("chat_node",chat_node)
+
     builder_graph.add_node("summarize_node",summarize_conversation)
-    builder_graph.add_node("retriever_node",retriever_node)
+
+    builder_graph.add_node("remember_pass_node",remember_pass_node)
     builder_graph.add_node("remember_node",remember_node)
 
+
+    builder_graph.add_node("retriever_node",retriever_node)
 
 
 
@@ -54,15 +66,28 @@ def base_chatbot():
             True:"retriever_node",
             False:"chat_node"
         })
+    # builder_graph.add_edge("chat_node","remember_pass_node")
+    # builder_graph.add_edge("chat_node","summarizer_pass_node")
 
 
+
+    need_remember_condition
     builder_graph.add_conditional_edges("chat_node",conversation_summarize_condition,{
             True:"summarize_node",
-            False:"remember_node"
+            False:"remember_pass_node"
         })
+    builder_graph.add_edge("summarize_node","remember_pass_node")
+
+    builder_graph.add_conditional_edges("remember_pass_node",need_remember_condition,{
+            "need_to_remember":"remember_node",
+            "no_need_to_remember":END
+        })
+
+
+
+
     builder_graph.add_edge("retriever_node","chat_node")
-    builder_graph.add_edge("summarize_node","remember_node")
-    builder_graph.add_edge("remember_node",END)
+    builder_graph.add_edge("summarize_node",END)
 
     conn = connect("data/vighnamitraai.db", check_same_thread=False)
     checkpointer = SqliteSaver(conn=conn)

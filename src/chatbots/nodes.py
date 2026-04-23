@@ -1,23 +1,35 @@
 from langgraph.graph import START,StateGraph,END
-from langgraph.store.memory import InMemoryStore
 from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage,AIMessage,SystemMessage,RemoveMessage
+from langchain_core.messages import HumanMessage,ToolMessage,SystemMessage,RemoveMessage
 
-import uuid
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from operator import add
+
+import uuid,time,dotenv,os
 from typing import List,Annotated
 from pydantic import BaseModel,Field
-from src.LLMs.load_llm import gpt_oss_20b,llama_3_3_70b_versatile,qwen3_32b
+from src.LLMs.load_llm import gpt_oss_120b,llama_3_3_70b_versatile,qwen3_32b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore
+from uuid import uuid4
+
+
+
+
+dotenv.load_dotenv()
+
+
+DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 #----------------LLMs Setups -------------------------
 
 
 
 llm_normal = llama_3_3_70b_versatile()
 llm_summarizer = qwen3_32b()
-llm_memory_extractor = gpt_oss_20b()
+llm = gpt_oss_120b()
 
 
 
@@ -27,15 +39,9 @@ llm_memory_extractor = gpt_oss_20b()
 
 #------------------- trace  ---------------------
 
-def update_trace(state, node_name):
-    return state.get("trace", []) + [node_name]
 
-
-
-
-
-
-
+def update_trace(state,node_name:str):
+    return state['trace'] + [node_name]
 
 
 
@@ -70,7 +76,7 @@ User memory: {user_details_content}
 """
 
 def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
-    trace = update_trace(state, "Chat Node")
+    trace = update_trace(state,"Chat Node")
 
     user_id = config['configurable']['user_id']
     namespace = ("user", user_id, "details")
@@ -110,8 +116,10 @@ def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
 
 #------------------------ Conversation summary Node-------------------------
 
+
+
 def summarize_conversation(state: ChatBotState):
-    trace = update_trace(state, "History Conversation Summarizer Node")
+    trace =  update_trace(state,"History Conversation Summarizer Node")
 
     existing_summary = state.get("summary", None)
 
@@ -133,78 +141,107 @@ def summarize_conversation(state: ChatBotState):
     response = llm_summarizer.invoke(messages_for_summary)
 
     return {
-        "summary": response.content,   # ✅ update memory
-        "messages": state["messages"], # ✅ DO NOT delete anything
+        "summary": response.content,
         "trace": trace
     }
 
 
 #------------------memory-node-----------------------------
 
-
-class MemoryItem(BaseModel):
-    text:str = Field(description="Atomic user memory")
-    is_new: bool= Field(description="True if new, false if duplicate")
+def remember_pass_node(state:ChatBotState):
+    return state
 
 
 class MemoryDecision(BaseModel):
-    should_write:bool
-    memories: List[MemoryItem] = Field(default_factory=list)
+    new_memories: Annotated[List[str],add] = Field(default_factory=list,description="Only new long-term memory,")
+# parser
 
 
-#for structured output
-MemoryExtractor_llm = llm_memory_extractor.with_structured_output(MemoryDecision)
+def remember_node(state: ChatBotState, config: RunnableConfig,store: BaseStore):
 
-
-MEMORY_PROMPT = """
-You are responsible for updating and maintaining accurate user memory.
-
-CURRENT USER DETAILS (existing memories):
-{user_details_content}
-
-TASK:
-- Review the user's latest message.
-- Extract user-specific info worth storing long-term (identity, stable preferences, ongoing projects/goals).
-- For each extracted item, set is_new=true ONLY if it adds NEW information compared to CURRENT USER DETAILS.
-- If it is basically the same meaning as something already present, set is_new=false.
-- Keep each memory as a short atomic sentence.
-- No speculation; only facts stated by the user.
-- If there is nothing memory-worthy, return should_write=false and an empty list.
-
-"""
-
-
-
-
-def remember_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
-    trace = update_trace(state, "remember Node")
     user_id = config["configurable"]["user_id"]
     ns = ("user", user_id, "details")
 
-    # existing memory (all items under namespace)
+    # 🔹 1. Fetch existing memory safely
     items = store.search(ns)
-    existing_list = [it.value.get("data", "") for it in items ]if items else []
-    existing = "\n".join(existing_list) if existing_list else "(empty)"
 
-    # latest user message
-    last_msg = state['messages'][-1].content
-    
+    existing_list = [
+        it.value.get("data", "")
+        for it in items
+        if isinstance(it.value, dict)
+    ]
 
-    decision: MemoryDecision = MemoryExtractor_llm.invoke(
-        [
-            SystemMessage(content=MEMORY_PROMPT.format(user_details_content=existing)),
-            {"role": "user", "content": last_msg},
-        ]
-    )
+    existing_memory = "\n".join(existing_list) if existing_list else "(empty)"
+    existing_set = set(existing_list)  # for dedup
 
-    if decision.should_write:
-        existing_set = set(existing_list)
-        for mem in decision.memories:
-            cleaned = mem.text.strip()
-            if mem.is_new and cleaned and cleaned not in existing_set :
-                store.put(ns, str(uuid.uuid4()), {"data": mem.text.strip()})
+    # 🔹 2. Prepare last messages context
+    last_msgs = state["messages"][-6:]
 
-    return {"trace":trace}
+    contents = [
+        f"{'human' if isinstance(msg, HumanMessage) else 'ai'} - {msg.content}"
+        for msg in last_msgs
+        if not isinstance(msg, ToolMessage)
+    ]
+
+    last_msgs_context = "\n".join(contents)
+
+    # 🔹 3. Build parser + prompt
+    parser = PydanticOutputParser(pydantic_object=MemoryDecision)
+
+    prompt_template = PromptTemplate(
+        template="""
+            Return ONLY in valid format. No explanation.
+
+            {format_instructions}
+
+            NOTE:
+            - Format: new_memories: list[str]
+            - Each string = one atomic memory
+
+            CURRENT USER DETAILS:
+            {existing_memory}
+
+            LAST CHAT:
+            {last_msgs}
+
+            Rules:
+            - Extract ONLY NEW long-term user info (identity, preferences, goals, skills, projects, qualification, likes, dislikes)
+            - Expand shorthand if needed
+            - DO NOT repeat or rephrase existing memories
+            - Avoid duplicates
+            - Keep each memory short and atomic
+            - Only return new memories
+            """,
+                    input_variables=["existing_memory", "last_msgs"],
+                    partial_variables={
+                        "format_instructions": parser.get_format_instructions()
+                    },
+                    )
+
+    # 🔹 4. Run chain
+    chain = prompt_template | llm | parser
+
+    decision = chain.invoke({
+        "existing_memory": existing_memory,
+        "last_msgs": last_msgs_context  
+    })
+
+    if decision.new_memories:
+        with PostgresStore.from_conn_string(DB_POSTGRESSTORE_PATH) as put_store:
+            put_store.setup()
+            for mem in decision.new_memories:
+                mem = mem.strip()
+                put_store.put(ns,str(uuid4()),{"data": mem})
+
+    # 🔹 6. Return state unchanged + trace
+    return {"trace": update_trace(state, "Remember Node")}
+
+
+
+
+
+
+
 
 
 
@@ -220,26 +257,33 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
 
 
 
-    trace = update_trace(state,"Retriever Node")
+    trace =  update_trace(state,"Retriever Node")
 
 
 
     user_id = config['configurable']['user_id']
+    tool_id = f"retriever_id_{uuid4()}"
 
 
 
     vectorstore = load_vectorstore(user_id)
     if vectorstore is None:
-        return {"messages":[AIMessage(content='No Douments uploaded by user')],"trace":trace}
+        return {"messages":[ToolMessage(
+            content='No Douments uploaded by user',
+            tool_name="retriever",
+            tool_call_id=tool_id)],"trace":trace}
     retriever = vectorstore.as_retriever(
-        search_kwargs={"k": 6}
+        search_kwargs={"k": 12}
         )
     query = state['messages'][-1].content
 
     docs = retriever.invoke(query)
     if not docs:
         return {
-            "messages": [AIMessage(content="Not enough info related to this. Could you provide a relevant document so I can help better?")],
+            "messages": [
+                ToolMessage(content="Not enough info related to this. Could you provide a relevant document so I can help better?",
+                tool_name="retriever",
+                tool_call_id=tool_id)],
             "trace": trace
         }
     
@@ -267,5 +311,12 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
         Final Answer:
             """
     response = llm_normal.invoke(prompt.format(context=fetched_context,query=query))
-    return {"messages":[response],"trace":trace}
+    return {"messages":[
+                ToolMessage(
+                    content=response.content,
+                    tool_name="retriever",
+                    tool_call_id=tool_id
+                )],
+            "trace":trace
+            }
 

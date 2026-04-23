@@ -26,12 +26,11 @@ def get_upload_docs(file:FileDetails):
     try:
         loader = DocLoader(doctype=file.doctype,path=file.path)
         docs = loader.load()
+        if not docs:
+            raise HTTPException(status_code=500,detail="NO document is loaded")
         if update_vectorstore(docs=docs,user_id=file.user_id):
             return {"response":"Uploaded Successfully"}
         else:
             return {"response":"something went wrong."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
