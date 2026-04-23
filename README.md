@@ -90,7 +90,7 @@ uv sync
 
 (or pip)
 ```bash
-pip install -r requirements.txt
+pip install 
 ```
 
 ---
@@ -98,7 +98,7 @@ pip install -r requirements.txt
 ### 4. Run Backend
 
 ```bash
-uvicorn main:app --reload
+uvicorn src.routes:app --reload
 ```
 
 ---
