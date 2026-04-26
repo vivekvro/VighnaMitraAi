@@ -25,10 +25,6 @@ load_dotenv()
 
 db_path = "data/vighnamitraai.db"
 
-URL_MAIN = os.getenv("MAIN_URL")
-URL_upload_document = URL_MAIN+"/vm/upload_document"
-
-
 chatbot = base_chatbot()
 
 

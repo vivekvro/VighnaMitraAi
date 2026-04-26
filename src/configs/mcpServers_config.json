@@ -1,0 +1,12 @@
+{
+    "Expense_Tracker":{
+        "command":"uv",
+        "args":[
+            "run",
+            "D:\\MCPs\\mcp_servers\\expense_tracker.py"
+        ],
+        "cwd":"D:\\MCPs",
+
+        "transport":"stdio"
+        }
+}

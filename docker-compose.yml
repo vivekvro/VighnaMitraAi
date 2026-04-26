@@ -15,3 +15,5 @@ services:
       - "8501:8501"
     depends_on:
       - postgres
+    env_file:
+      - .env

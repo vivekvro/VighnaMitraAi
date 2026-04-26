@@ -28,21 +28,16 @@ dotenv.load_dotenv()
 DB_POSTGRES_URL = os.getenv("DB_POSTGRES_URL")
 
 
-import streamlit as st
-
-
-
-
 
 
 def base_chatbot():
 
     postgres_conn = postgres_connect(
-        host="localhost",
+        host="postgres",
         dbname="postgres",
         user="postgres",
         password="postgres",
-        port=5442
+        port=5432
 
     )
     store = PostgresStore(conn=postgres_conn)
