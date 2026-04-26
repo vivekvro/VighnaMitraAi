@@ -3,6 +3,7 @@ from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage,ToolMessage,SystemMessage,RemoveMessage
+from langchain_core.messages.utils import count_tokens_approximately
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -138,6 +139,35 @@ def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
 
 
 def summarize_conversation(state: ChatBotState):
+    if len(state['messages']) > 20  or  count_tokens_approximately(state['messages']) > 2800:
+        trace =  update_trace(state,"History Conversation Summarizer Node")
+
+        existing_summary = state.get("summary", None)
+
+        # 🧠 Build prompt
+        if existing_summary:
+            prompt = (
+                f"Existing summary:\n{existing_summary}\n\n"
+                "Update this summary using the new conversation above. "
+                "Keep it concise and include only important details."
+            )
+        else:
+            prompt = "Summarize the conversation above concisely."
+
+        # 📌 Use full conversation for summarization
+        messages_for_summary = state["messages"] + [
+            HumanMessage(content=prompt)
+        ]
+
+        response = llm_summarizer.invoke(messages_for_summary)
+
+        return {
+            "summary": response.content,
+            "trace": trace
+        }
+    else:
+        return state
+ 
     trace =  update_trace(state,"History Conversation Summarizer Node")
 
     existing_summary = state.get("summary", None)

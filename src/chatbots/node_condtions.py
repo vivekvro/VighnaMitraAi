@@ -63,13 +63,6 @@ def need_remember_condition(state: ChatBotState, config: RunnableConfig, store: 
 
 
 
-#------ Conversation Summarizer condition -------------------------
-def conversation_summarize_condition(state: ChatBotState):
-    if len(state['messages']) > 20  or  count_tokens_approximately(state['messages']) > 2800:
-        return True
-    else:
-        return False
- 
 #------------- RAG condition----------------------------
 class RagCondition(BaseModel):
     need_rag:bool = Field(

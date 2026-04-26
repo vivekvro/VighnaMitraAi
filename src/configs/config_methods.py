@@ -51,19 +51,6 @@ async def update_config_local(servername:str,configs:ToolConfig):
 
 
 
-async def main():
-    data = await load_config()
-    for d in data.keys():
-        print(d," : ", data[d])
-
-if __name__=="__main__":
-    asyncio.run(main())
-
-
-
-
-
-
 
 
 

@@ -15,7 +15,7 @@ from sqlite3 import connect
 from src.chatbots.chatbot_graphs import base_chatbot
 from langchain_core.messages import HumanMessage
 from src.rag.DocumentsLoader import  load_tempfile_path,DocLoader
-import requests
+import requests,asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,7 +25,7 @@ load_dotenv()
 
 db_path = "data/vighnamitraai.db"
 
-chatbot = base_chatbot()
+chatbot = asyncio.run(base_chatbot())
 
 
 
@@ -356,7 +356,7 @@ config = {"configurable":{
 
 
 def get_messages(config):
-    state = chatbot.get_state(config=config)
+    state = asyncio.run(chatbot.get_state(config=config))
     return state.values.get("messages",[])
 
 
@@ -381,10 +381,14 @@ if user_input:
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        result_state = chatbot.invoke({
-            "messages":[HumanMessage(content=user_input)],
-            "trace":[]
-            },config=config)
+        result_state = asyncio.run(
+            chatbot.invoke({
+                "messages":[HumanMessage(content=user_input)],
+                "trace":[]
+                },
+                config=config
+            )
+        )
 
         
 
