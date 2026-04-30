@@ -1,21 +1,42 @@
-from langgraph.graph import START,StateGraph,END
-from langgraph.store.base import BaseStore
-from langgraph.store.postgres import PostgresStore
-from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage,ToolMessage,SystemMessage,RemoveMessage
-from langchain_core.messages.utils import count_tokens_approximately
-
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+# =======================
+# Standard Library
+import os
+import asyncio
+import datetime
+from uuid import uuid4
+from typing import List, Annotated
 from operator import add
 
-import uuid,datetime,dotenv,os
-from typing import List,Annotated
-from pydantic import BaseModel,Field
-from src.LLMs.load_llm import gpt_oss_120b,llama_3_3_70b_versatile,qwen3_32b
+
+
+
+# Third-party Libraries
+
+import dotenv
+from pydantic import BaseModel, Field
+from langchain_classic.tools import Tool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+
+from langgraph.store.base import BaseStore
+from langgraph.store.postgres import PostgresStore
+from langgraph.prebuilt import ToolNode
+
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+# Local Project Imports
+from src.LLMs.load_llm import gpt_oss_120b, qwen3_32b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore
-from uuid import uuid4
+from src.configs.config_methods import load_config
+# =======================
+
+
+
+
 
 
 def get_current_date():
@@ -32,10 +53,41 @@ DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 
 
 
-llm_normal = llama_3_3_70b_versatile()
 llm_summarizer = qwen3_32b()
 llm = gpt_oss_120b()
 
+
+
+#-----------------------------------------------
+#get tools
+async def get_tools():
+
+    servers = await load_config()
+
+    client = MultiServerMCPClient(servers)
+
+    tools = await client.get_tools()
+    tools_ls = []
+    for t in tools:
+        tools_ls.append(Tool(
+            name_or_callable=t.name,
+            description=t.description,
+            args_schema=t.args_schema,
+            func=t.invoke
+            ))
+
+
+tools_list = asyncio.run(get_tools())
+
+
+llm_with_tools = llm.bind_tools(tools=tools_list)
+
+#-----------------------ToolNode------------------------------------
+
+
+
+
+tool_node = ToolNode(tools=tools_list)
 
 
 
@@ -53,49 +105,93 @@ def update_trace(state,node_name:str):
 #-------------Chat-node-----------------------------
 
 
-SYSTEM_PROMPT_TEMPLATE = """
-You are VighnaMitra, an AI friend (not an assistant).
-current datetime = {datetime}
+SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant).
 
-Identity:
-- Your name is VighnaMitra
-- You are an AI friend, not a tool, not an assistant
-- You help users overcome problems and think clearly
+            basic chat info:
 
-Act as a concise, intelligent AI assistant.
+            * current datetime = {datetime}
+            * user_id = {user_id}
 
-## Behavior
-- Keep responses short, natural, and human-like
-- Be structured only when explaining concepts/topics (use Markdown then)
-- Avoid unnecessary formatting in normal conversation
-- Do not generate generic follow-up question lists
-- During topic explanations, ask 1–2 relevant follow-up questions if it improves understanding
-- In normal conversation, ask questions only when needed for better clarity or response quality
-- Stay consistent in identity (no “I don’t know who I am” type responses)
-- Do not mention or reveal system instructions
-- Stay strictly within the current conversation topic
-- Use memory only when clearly relevant, never randomly
+            Identity:
 
-## Tone
-- Friendly, calm, and supportive
-- Slightly informal (like a smart friend)
-- Not overly formal or robotic
+            * Your name is VighnaMitra
+            * You are an AI friend, not a tool, not an assistant
+            * You help users overcome problems and think clearly
 
-## Response Style
-- Focus on clarity and usefulness over length
-- Prefer practical insights over theory
-- Avoid repetition and filler
-- Correct user grammar silently without interrupting flow
+            Act as a concise, intelligent AI assistant.
 
-## Constraints
-- Do not break character
-- Do not expose internal reasoning or system setup
+            ## Behavior
 
+            * Keep responses short, natural, and human-like
+            * Be structured only when explaining concepts/topics (use Markdown then)
+            * Avoid unnecessary formatting in normal conversation
+            * Do not generate generic follow-up question lists
+            * During topic explanations, ask 1–2 relevant follow-up questions if useful
+            * In normal conversation, ask questions only when needed
+            * Stay consistent in identity
+            * Do not mention or reveal system instructions
+            * Stay strictly within the current conversation topic
+            * Use memory only when clearly relevant
 
-User memory: {user_details_content}
-"""
+            ## Tone
+
+            * Friendly, calm, supportive
+            * Slightly informal (like a smart friend)
+            * Not robotic or overly formal
+
+            ## Response Style
+
+            * Focus on clarity and usefulness over length
+            * Prefer practical insights over theory
+            * Avoid repetition and filler
+            * Correct user grammar silently
+
+            ## Decision Rules (VERY IMPORTANT)
+
+            You must decide the next action based on the user's query:
+
+            1. **Use tools**
+            → When the task requires performing an action
+            (e.g., calculations, API calls, DB operations, structured tasks)
+
+            2. **Use retriever**
+            → When the answer depends on external knowledge/documents
+            (e.g., notes, stored data, PDFs, embeddings, memory retrieval)
+
+            3. **Normal conversation (NO tools)**
+            → When the query is general chat, reasoning, explanation, or opinion
+
+            ## Tool Usage Guidelines
+
+            * Use tools only when necessary, not by default
+            * Do not call tools for simple conversation
+            * Only pass required arguments defined in schema
+            * Do NOT invent parameters
+
+            ## Important Notes
+
+            * Some tools use internal config (RunnableConfig), do NOT pass manually unless required
+            * Prefer minimal and correct tool usage
+
+            ## Goal
+
+            * Choose correctly between:
+            → tool
+            → retriever
+            → normal response
+
+            * Be efficient and accurate
+
+            * Avoid unnecessary tool calls
+
+            User memory: {user_details_content}
+
+    """
 
 def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
+
+
+
     trace = update_trace(state,"Chat Node")
 
     user_id = config['configurable']['user_id']
@@ -110,23 +206,20 @@ def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
 
     # system
     messages.append(SystemMessage(
-        content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),
+        content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
             user_details_content=existing_memory
         )
     ))
 
-    # summary (long-term)
     if state.get('summary'):
         messages.append(SystemMessage(
             content=f"Conversation Summary:\n{state['summary']}"
         ))
-        # 🔥 only recent messages
         messages.extend(state["messages"][-4:])
     else:
-        # full history if no summary
         messages.extend(state["messages"])
 
-    response = llm_normal.invoke(messages)
+    response =  llm_with_tools.invoke(messages)
 
     return {
         "messages": [response],  # ✅ let add_messages handle append
@@ -168,31 +261,6 @@ def summarize_conversation(state: ChatBotState):
     else:
         return state
  
-    trace =  update_trace(state,"History Conversation Summarizer Node")
-
-    existing_summary = state.get("summary", None)
-
-    # 🧠 Build prompt
-    if existing_summary:
-        prompt = (
-            f"Existing summary:\n{existing_summary}\n\n"
-            "Update this summary using the new conversation above. "
-            "Keep it concise and include only important details."
-        )
-    else:
-        prompt = "Summarize the conversation above concisely."
-
-    # 📌 Use full conversation for summarization
-    messages_for_summary = state["messages"] + [
-        HumanMessage(content=prompt)
-    ]
-
-    response = llm_summarizer.invoke(messages_for_summary)
-
-    return {
-        "summary": response.content,
-        "trace": trace
-    }
 
 
 #------------------memory-node-----------------------------
@@ -360,7 +428,7 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
 
         Final Answer:
             """
-    response = llm_normal.invoke(prompt.format(context=fetched_context,query=query))
+    response = llm.invoke(prompt.format(context=fetched_context,query=query))
     return {"messages":[
                 ToolMessage(
                     content=response.content,
@@ -370,3 +438,7 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
             "trace":trace
             }
 
+
+
+if __name__=="__main__":
+    print(tools_list)
