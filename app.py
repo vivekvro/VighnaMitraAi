@@ -1,22 +1,30 @@
-import streamlit as st, re, datetime as dt,time,os
+# Standard
+import os
+import re
+import time
+import asyncio
+import datetime as dt
 from uuid import uuid4
-from src.encrypt import PasswordEncoder,ComparePasswords
+from sqlite3 import connect
+
+# Third-party
+import requests
+import streamlit as st
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage
+
+# Local
+from src.encrypt import ComparePasswords
 from src.user_auth import (
     create_accounts_info_table,
     insert_account_info,
     check_if_email_exists,
     check_if_user_exists,
-    fetch_password_by_username
-    )
+    fetch_password_by_username,
+)
 from src.rag.retrievers import update_vectorstore
-
-from langgraph.checkpoint.sqlite import SqliteSaver
-from sqlite3 import connect
 from src.chatbots.chatbot_graphs import base_chatbot
-from langchain_core.messages import HumanMessage
-from src.rag.DocumentsLoader import  load_tempfile_path,DocLoader
-import requests,asyncio
-from dotenv import load_dotenv
+from src.rag.DocumentsLoader import load_tempfile_path, DocLoader
 
 load_dotenv()
 
@@ -25,10 +33,12 @@ load_dotenv()
 
 db_path = "data/vighnamitraai.db"
 
-chatbot = asyncio.run(base_chatbot())
+def load_chatbot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(base_chatbot())
 
-
-
+chatbot = load_chatbot()
 
 
 
@@ -353,15 +363,13 @@ config = {"configurable":{
         }
     }
 
-
-
 def get_messages(config):
-    state = asyncio.run(chatbot.get_state(config=config))
-    return state.values.get("messages",[])
+    state = chatbot.get_state(config=config)
+    return state.values.get("messages", [])
 
+messages = get_messages(config)
 
-
-for msg in get_messages(config):
+for msg in messages:
     role = "user" if msg.type == "human" else "assistant"
     with st.chat_message(role):
         st.write(msg.content)
@@ -377,20 +385,27 @@ def fake_stream_response(text:str):
         time.sleep(0.002)
 
 
-if user_input:
-    with st.chat_message(name="user"):
-        st.write(user_input)
-    with st.spinner("thinking...."):
-        result_state = asyncio.run(
-            chatbot.invoke({
+
+
+def get_chatbot_response(user_input:str,):
+    return chatbot.invoke({
                 "messages":[HumanMessage(content=user_input)],
+                "user_id":username,
                 "trace":[]
                 },
                 config=config
             )
+
+
+if user_input:
+    with st.chat_message(name="user"):
+        st.write(user_input)
+    with st.spinner("thinking...."):
+        result_state = asyncio.run(get_chatbot_response(user_input)
+            
         )
 
-        
+       
 
     with st.chat_message(name="assistant"):
         if "trace" in result_state:# 👇 Process tracer
