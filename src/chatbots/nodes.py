@@ -67,18 +67,15 @@ async def get_tools():
     client = MultiServerMCPClient(servers)
 
     tools = await client.get_tools()
-    tools_ls = []
-    for t in tools:
-        tools_ls.append(Tool(
-            name_or_callable=t.name,
-            description=t.description,
-            args_schema=t.args_schema,
-            func=t.invoke
-            ))
+    return tools
 
 
-tools_list = asyncio.run(get_tools())
+def load_tools_sync():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(get_tools())
 
+tools_list = load_tools_sync()
 
 llm_with_tools = llm.bind_tools(tools=tools_list)
 
@@ -222,7 +219,7 @@ def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
     response =  llm_with_tools.invoke(messages)
 
     return {
-        "messages": [response],  # ✅ let add_messages handle append
+        "messages": [response], 
         "trace": trace
     }
 
