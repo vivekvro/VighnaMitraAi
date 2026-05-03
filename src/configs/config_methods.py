@@ -6,9 +6,9 @@ import asyncio
 
 
 
+# local
 
-
-class ToolConfig(BaseModel):
+class ToolConfigLocal(BaseModel):
     command: str = Field(
         default="uv",
         description="Executable used to run the tool (e.g., uv, python, node)"
@@ -42,7 +42,7 @@ async def load_config():
 
 
 
-async def update_config_local(servername:str,configs:ToolConfig):
+async def update_config_local(servername:str,configs:ToolConfigLocal):
     data = await load_config()
     data[servername] = configs.model_dump()
     with open("src/configs/mcpServers_config.json","w") as f:
@@ -50,7 +50,50 @@ async def update_config_local(servername:str,configs:ToolConfig):
     return"Config updated!."
 
 
+# Api / online
+# {
+#   "transport": "http",
+#   "url": "https://mcp.example.com",
+#   "headers": {
+#     "Authorization": "Bearer YOUR_API_KEY"
+#   },
+#   "timeout": 30
+# }
 
+
+from pydantic import BaseModel, Field, HttpUrl
+from typing import Dict, Optional, Literal
+
+
+class ToolConfigRemote(BaseModel):
+    url: HttpUrl = Field(
+        description="Base URL of the MCP server"
+    )
+
+    transport: Literal["http", "websocket"] = Field(
+        default="http",
+        description="Transport protocol used to communicate with MCP server"
+    )
+
+    headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional headers (e.g., Authorization)"
+    )
+
+    timeout: int = Field(
+        default=30,
+        description="Connection/request timeout in seconds"
+    )
+
+    reconnect: bool = Field(
+        default=True,
+        description="Whether to auto-reconnect (useful for websocket transport)"
+    )
+
+    auth_token: Optional[str] = Field(
+        default=None,
+        description="Optional API/Bearer token"
+    )
 
 
 

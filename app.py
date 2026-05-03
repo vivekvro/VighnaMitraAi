@@ -401,14 +401,10 @@ if user_input:
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        result_state = asyncio.run(get_chatbot_response(user_input)
-            
-        )
-
-       
+        result_state = get_chatbot_response(user_input)
 
     with st.chat_message(name="assistant"):
-        if "trace" in result_state:# 👇 Process tracer
+        if "trace" in result_state:
             with st.expander("⚙️ Execution Trace"):
                 for step in result_state["trace"]:
                     st.write(step)
