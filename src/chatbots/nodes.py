@@ -4,7 +4,7 @@ import os
 import asyncio
 import datetime
 from uuid import uuid4
-from typing import List, Annotated
+from typing import List, Annotated,Optional,Literal
 from operator import add
 
 
@@ -99,7 +99,29 @@ def update_trace(state,node_name:str):
 
 
 
+#------------------- user memory ------------------------
+
+
+def user_memory_node(state: ChatBotState,store: BaseStore):
+
+    user_id = state["user_details"]["user_id"]
+    namespace = ("user",user_id,"details")
+
+    items = store.search()
+
+
+
+
+
+
+
+
+
 #-------------Chat-node-----------------------------
+
+
+
+
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant).
@@ -150,27 +172,27 @@ SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant)
     {user_details_content}
 """
 
-def chat_node(state: ChatBotState, config: RunnableConfig, store: BaseStore):
+def chat_node(state: ChatBotState):
     trace = update_trace(state,"Chat Node")
     last_summarized_index = state['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
 
-    user_id = config['configurable']['user_id']
-    namespace = ("user", user_id, "details")
-    items = store.search(namespace)
+    # user_id = state['user_details']["user_id"]
+    # namespace = ("user", user_id, "details")
+    # items = store.search(namespace)
 
-    existing_memory = "\n".join(
-        f"- {it.value.get('data','')}" for it in items
-    ) if items else "(empty)"
+    # existing_memory = "\n".join(
+    #     f"- {it.value.get('data','')}" for it in items
+    # ) if items else "(empty)"
 
     messages = []
 
-    # system
-    messages.append(SystemMessage(
-        content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
-            user_details_content=existing_memory
-        )
-    ))
+    # # system
+    # messages.append(SystemMessage(
+    #     content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
+    #         user_details_content=existing_memory
+    #     )
+    # ))
 
     if state.get('summary'):
         messages.append(SystemMessage(
@@ -244,8 +266,42 @@ def summarize_conversation(state: ChatBotState):
 
 #------------------memory-node-----------------------------
 
-def remember_pass_node(state:ChatBotState):
-    return state
+class NewMemoryDetails(BaseModel):
+    memory:str = Field(default_factory=str,description="Only new long-term memory,No explanation.")
+    memory_type: Literal[
+        "personal", "habit","interests","goals","skills","dislikes", "preferences","learning_style",
+        "projects","tools","constraints","knowledge_level","career","education","behavior",
+        "decisions","context","health",
+] = Field(
+    description="""
+Categorize the type of long-term memory extracted from the user.
+
+Use:
+- "personal": Identity details (name, background, location, etc.)
+- "habit": Repeated behaviors or routines
+- "interests": Topics, domains, or activities the user likes
+- "goals": Short-term or long-term objectives
+- "skills": Abilities, expertise, or things the user knows
+- "dislikes": Things the user avoids or does not like
+- "preferences": Communication or response preferences (tone, length, format)
+- "learning_style": How the user prefers to learn (examples, hints, step-by-step, etc.)
+- "projects": Ongoing or recurring work the user is involved in
+- "tools": Technologies, frameworks, or tools the user uses
+- "constraints": Limitations such as time, device, resources, or restrictions
+- "knowledge_level": User’s proficiency level in a specific domain
+- "career": Job aspirations, professional direction, or industry focus
+- "education": Academic background, degree, or subjects studied
+- "behavior": Behavioral patterns (e.g., consistency, procrastination)
+- "decisions": Important choices made by the user that affect future context
+- "context": Temporary but reusable situations (e.g., exam prep, current focus area)
+- "health": Health-related info ONLY if explicitly shared and safe to store
+
+Rules:
+- Choose the single best matching category.
+- Do not create new categories.
+- Prefer more specific types over generic ones.
+- Avoid storing sensitive data unless explicitly allowed (especially for "health").
+""")
 
 
 class MemoryDecision(BaseModel):
@@ -253,7 +309,24 @@ class MemoryDecision(BaseModel):
 Return True only if the conversation includes persistent, reusable information(e.g., preferences, identity, goals, constraints, or important context).
 Return False if the content is generic, one-time, or not useful for future conversations.
 """)
-    new_memories: List[str] = Field(default_factory=list,description="Only new long-term memory,")
+    new_memories: Optional[List[NewMemoryDetails]] = Field(
+        default_factory=list,
+        description="""List of newly extracted long-term memories from the current conversation.
+
+Guidelines:
+- Include ONLY new, relevant, and reusable information.
+- Each item must be concise, atomic (one fact per entry), and self-contained.
+- Do NOT include explanations, reasoning, or extra text—only the memory itself.
+- Avoid duplicating existing memories.
+- Skip trivial, one-time, or non-useful information.
+- Ensure the memory is meaningful for improving future interactions (e.g., preferences, goals, habits, projects, constraints).
+
+Formatting:
+- Write memories in clear, normalized form (e.g., "User prefers short responses").
+- Do not include timestamps, metadata, or conversational phrases.
+
+If no valid memory is found, return an empty list.
+""")
 
 
 
@@ -360,9 +433,6 @@ Rules:
 
 
     dt= get_current_date()
-
-    dt = get_current_date()
-
     with PostgresStore.from_conn_string(DB_POSTGRESSTORE_PATH) as put_store:
         put_store.setup()
         for mem in new_unique_memories:
@@ -384,24 +454,178 @@ Rules:
 
 
 
+
+
 #-----------------Retriever-node------------------------------------------------
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+class RetrieverCondition(BaseModel):
+    need_retriever: bool = Field(description="""
+Return True if the user's query requires retrieving information from a knowledge base,
+uploaded documents/url, or vector database (RAG).
+
+Return False if the query can be answered using:
+- general knowledge
+- reasoning or logic
+- latest info (if not from uploaded documents)
+- conversation
+- tool usage (calculations, API calls, etc.)
+""")
+
+    search_query: Optional[str] = Field(
+        default=None,
+        description="""
+Provide a clear, optimized query for similarity search ONLY if need_retriever = True.
+
+Rules:
+- Rewrite the user query to be specific and retrieval-friendly
+- Remove unnecessary words
+- Keep key entities, topics, and intent
+- If need_retriever = False → return null
+"""
+    )
+    search_type: Literal["similarity","mmr"]="similarity"
+    top_k: int = Field(
+    default=7,
+    ge=4,
+    le=12,
+    description="""
+        Number of documents to retrieve from the vector store.
+
+        Guidelines:
+        - Lower values (4–6): for simple, precise queries (faster, less noise)
+        - Medium values (7–9): for explanatory or moderately complex queries
+        - Higher values (10–12): for complex, multi-part, or ambiguous queries
+
+        The value should balance recall (more context) and precision (less noise).
+        Avoid unnecessary high values unless the query clearly requires broader context.
+"""
+)
+
 def retriever_node(state: ChatBotState,config: RunnableConfig):
 
+    message = state['messages'][-1].content
 
+    parser = PydanticOutputParser(pydantic_object=RetrieverCondition)
 
+    conditionprompt = PromptTemplate(
+    template="""
+Return ONLY in valid format.
 
+{format_instructions}
 
+USER QUERY:
+{user_query}
 
+Task:
+Decide whether retrieval (RAG) is STRICTLY required.
+
+Be conservative: prefer False unless retrieval is clearly necessary.
+
+---
+
+Decision Rules:
+
+Set need_retriever = True ONLY if:
+- The query explicitly depends on:
+  • user-uploaded documents
+  • stored memory / vector database
+  • past information NOT present in the current chat
+- OR the user refers to something like:
+  • "my notes", "uploaded file", "document", "earlier data", etc.
+
+Set need_retriever = False if the query can be answered using:
+- general knowledge (ML, coding, concepts, etc.)
+- reasoning or logic
+- normal conversation
+- tools (math, APIs, etc.)
+- recent/general world knowledge
+- anything already available in current messages
+
+---
+
+Query Rewriting (ONLY if need_retriever = True):
+- Rewrite into a short, precise retrieval query
+- Keep only key entities and intent
+- Remove filler words
+- Do NOT add new information
+
+---
+
+Consistency Rules:
+- If need_retriever = False → search_query MUST be null
+- If unsure → return False
+
+---
+
+Examples:
+
+User: "What did I upload about transformers?"
+→ need_retriever: True
+→ search_query: (Generate a concise, optimized query capturing the topic and source. Do NOT copy this example.)
+
+User: "Summarize my project details from memory"
+→ need_retriever: True
+→ search_query: (Generate a focused query about user's stored project details. Do NOT copy this example.)
+
+User: "Explain gradient descent"
+→ need_retriever: False
+→ search_query: null
+
+User: "2 + 2"
+→ need_retriever: False
+→ search_query: null
+
+User: "What's the capital of France?"
+→ need_retriever: False
+→ search_query: null
+""",
+        input_variables=["user_query"],
+        partial_variables={
+            "format_instructions": parser.get_format_instructions()
+        },
+    )
+    chain = conditionprompt | llm | parser 
+    conditionresponse = chain.invoke({"user_query":message})
+
+    if not conditionresponse.need_retriever:
+        return state
+    
     trace =  update_trace(state,"Retriever Node")
-
-
 
     user_id = config['configurable']['user_id']
     tool_id = f"retriever_id_{uuid4()}"
+    
+
+
+
+    search_query = conditionresponse.search_query
+    if not search_query:
+        return {
+            "messages":[ToolMessage(
+            content='Failed to process retrieving query!!.',
+            tool_name="retriever",
+            tool_call_id=tool_id)]
+        }
+
+
+
+
+
+    
 
 
 
@@ -414,9 +638,9 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
     retriever = vectorstore.as_retriever(
         search_kwargs={"k": 12}
         )
-    query = state['messages'][-1].content
 
-    docs = retriever.invoke(query)
+
+    docs = retriever.invoke(search_query)
     if not docs:
         return {
             "messages": [
@@ -449,7 +673,7 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
 
         Final Answer:
             """
-    response = llm.invoke(prompt.format(context=fetched_context,query=query))
+    response = llm.invoke(prompt.format(context=fetched_context,query=search_query))
     return {"messages":[
                 ToolMessage(
                     content=response.content,
