@@ -23,62 +23,6 @@ llm = gpt_oss_120b()
 #-------remember_node------------
 
 
-class RememberNodeConditon(BaseModel):
-    need_to_remember :bool= Field(description="""Return True only if the conversation includes persistent, reusable information (e.g., preferences, identity, goals, constraints, or important context).
-Return False if the content is generic, one-time, or not useful for future conversations.
-""")
-
-def need_remember_condition(state: ChatBotState, config: RunnableConfig, store: BaseStore):
-    user_id = config["configurable"]["user_id"]
-
-    ns = ("user", user_id, "details")
-    items = store.search(ns)
-    existing_memory = "\n".join(it.value.get("data", "") for it in items) if items else "(empty)"
-
-    last_msgs = state['messages'][-6:]
-    contents = [
-        f"{'human'} - {msg.content}"
-        for msg in last_msgs
-        if isinstance(msg, HumanMessage)
-    ]
-    last_msgs_content = "\n".join(contents)
-
-
-    prompt = PromptTemplate()
-
-    prompt = f"""
-        You are a strict classifier.
-
-        Decide if NEW long-term memory should be stored.
-
-        CURRENT USER DETAILS:
-        {existing_memory}
-
-        LAST CHAT:
-        {last_msgs_content}
-
-        Rules:
-        - Return True ONLY if there is NEW personal, stable, reusable info
-        (preferences, goals, identity, habits)
-        - Return False if:
-            - info is temporary
-            - generic
-            - OR already exists
-
-        Output ONLY one word:
-        True or False
-"""
-    chain = prompt | llm | parser
-    response = llm.invoke(prompt)
-    decision = response.content.strip().lower()
-
-    return "need_to_remember" if decision == "yes" else "no_need_to_remember"
-
-
-
-
-
-
 
 #------------- RAG condition----------------------------
 class RagConditionClass(BaseModel):

@@ -390,7 +390,9 @@ def fake_stream_response(text:str):
 def get_chatbot_response(user_input:str,):
     return chatbot.invoke({
                 "messages":[HumanMessage(content=user_input)],
-                "user_id":username,
+                "user_details":{
+                    "user_id":username,
+                    },
                 "trace":[]
                 },
                 config=config

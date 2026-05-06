@@ -215,7 +215,7 @@ def chat_node(state: ChatBotState):
 
 
 def summarize_conversation(state: ChatBotState):
-    last_summarized_index = state['summary_end_index']
+    last_summarized_index = state['summary']['summary_end_index']
     messages = state["messages"][last_summarized_index:]
     if len(messages) > 20  or  count_tokens_approximately(messages) > 2800:
         trace =  update_trace(state,"History Conversation Summarizer Node")
@@ -229,7 +229,7 @@ def summarize_conversation(state: ChatBotState):
 
 
 
-        existing_summary = state.get("summary", None)
+        existing_summary = state['summary']['summary_content']
 
         if existing_summary:
             prompt = (
@@ -255,8 +255,9 @@ def summarize_conversation(state: ChatBotState):
         response = llm_summarizer.invoke(messages_for_summary)
 
         return {
-            "summary": response.content,
-            "summary_end_index":new_summarized_index,
+            "summary":{
+                "summary_content":response.content,
+                "summary_end_index":new_summarized_index},
             "trace": trace
         }
     else:
@@ -308,6 +309,8 @@ class MemoryDecision(BaseModel):
     need_to_remember :bool= Field(description="""
 Return True only if the conversation includes persistent, reusable information(e.g., preferences, identity, goals, constraints, or important context).
 Return False if the content is generic, one-time, or not useful for future conversations.
+- If False, new_memories MUST be an empty list.
+- If True, new_memories MUST contain at least one valid memory.
 """)
     new_memories: Optional[List[NewMemoryDetails]] = Field(
         default_factory=list,
@@ -330,13 +333,13 @@ If no valid memory is found, return an empty list.
 
 
 
-def remember_node(state: ChatBotState, config: RunnableConfig,store: BaseStore):
+def remember_node(state: ChatBotState, store: BaseStore):
 
-    user_id = config["configurable"]["user_id"]
-    ns = ("user", user_id, "details")
+    user_id = state['user_details']["user_id"]
+    namespace = ("user", user_id, "details")
 
     # 🔹 1. Fetch existing memory safely
-    items = store.search(ns)
+    items = store.search(namespace)
 
     existing_list = [
         it.value.get("data", "")
@@ -437,7 +440,7 @@ Rules:
         put_store.setup()
         for mem in new_unique_memories:
             put_store.put(
-                ns,
+                namespace,
                 str(uuid4()),
                 {"data": mem, "date": dt[0], "time": dt[1]}
             )
@@ -472,8 +475,8 @@ Rules:
 
 
 
-class RetrieverCondition(BaseModel):
-    need_retriever: bool = Field(description="""
+class RetrievalDecision(BaseModel):
+    requires_retrieval: bool = Field(description="""
 Return True if the user's query requires retrieving information from a knowledge base,
 uploaded documents/url, or vector database (RAG).
 
@@ -497,8 +500,8 @@ Rules:
 - If need_retriever = False → return null
 """
     )
-    search_type: Literal["similarity","mmr"]="similarity"
-    top_k: int = Field(
+    retrieval_mode : Literal["similarity","mmr"]="similarity"
+    num_docs: int = Field(
     default=7,
     ge=4,
     le=12,
@@ -506,9 +509,9 @@ Rules:
         Number of documents to retrieve from the vector store.
 
         Guidelines:
-        - Lower values (4–6): for simple, precise queries (faster, less noise)
-        - Medium values (7–9): for explanatory or moderately complex queries
-        - Higher values (10–12): for complex, multi-part, or ambiguous queries
+        - Lower values (4-6): for simple, precise queries (faster, less noise)
+        - Medium values (7-9): for explanatory or moderately complex queries
+        - Higher values (10-12): for complex, multi-part, or ambiguous queries
 
         The value should balance recall (more context) and precision (less noise).
         Avoid unnecessary high values unless the query clearly requires broader context.
@@ -519,7 +522,7 @@ def retriever_node(state: ChatBotState,config: RunnableConfig):
 
     message = state['messages'][-1].content
 
-    parser = PydanticOutputParser(pydantic_object=RetrieverCondition)
+    parser = PydanticOutputParser(pydantic_object=RetrievalDecision)
 
     conditionprompt = PromptTemplate(
     template="""
@@ -601,34 +604,37 @@ User: "What's the capital of France?"
     chain = conditionprompt | llm | parser 
     conditionresponse = chain.invoke({"user_query":message})
 
-    if not conditionresponse.need_retriever:
+    if not conditionresponse.requires_retrieval:
         return state
-    
-    trace =  update_trace(state,"Retriever Node")
 
+
+
+
+
+
+
+    trace =  update_trace(state,"Retriever Node")
     user_id = config['configurable']['user_id']
     tool_id = f"retriever_id_{uuid4()}"
+    num_docs = conditionresponse.num_docs
+    retrieval_mode = conditionresponse.retrieval_mode
     
-
-
-
     search_query = conditionresponse.search_query
     if not search_query:
-        return {
-            "messages":[ToolMessage(
-            content='Failed to process retrieving query!!.',
-            tool_name="retriever",
-            tool_call_id=tool_id)]
-        }
+        search_query_prompt  = f"""Convert the user's query into an optimized semantic search query for a vector database.
+Instructions:
+- Extract main topic, subtopics, and intent
+- Add relevant technical/contextual keywords if missing
+- Keep it short (5-15 words)
+- No full sentences, no explanations
 
+User Query: {message}
 
-
-
-
+Search Query:
+"""
+        response = llm.invoke(search_query_prompt)
+        search_query = response.content
     
-
-
-
     vectorstore = load_vectorstore(user_id)
     if vectorstore is None:
         return {"messages":[ToolMessage(
@@ -636,10 +642,11 @@ User: "What's the capital of France?"
             tool_name="retriever",
             tool_call_id=tool_id)],"trace":trace}
     retriever = vectorstore.as_retriever(
-        search_kwargs={"k": 12}
+        search_type=retrieval_mode,
+        search_kwargs={
+            "k": num_docs
+            }
         )
-
-
     docs = retriever.invoke(search_query)
     if not docs:
         return {

@@ -16,14 +16,19 @@ class BaseChatState(TypedDict):
 
 
 class SummaryState(TypedDict):
-    summary :Annotated[str,"Updated summary combining previous + new conversation chunk"]
+    summary_content :Annotated[str,"Updated summary combining previous + new conversation chunk"]=None
     summary_end_index: int = 0
 
-
-
-
-
-
-class ChatBotState(BaseChatState,SummaryState):
+class UserDetails(TypedDict):
     user_id:str
+    user_memroy:str=""
+
+
+
+
+
+
+class ChatBotState(BaseChatState):
+    summary:SummaryState
+    user_details:UserDetails
     trace:List[str]=Field(default_factory=list,description="in this add used tools and nodes.")
