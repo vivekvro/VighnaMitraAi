@@ -366,15 +366,17 @@ def remember_node(state: ChatBotState, store: BaseStore):
 
     prompt_template = PromptTemplate(
     template="""
-Return ONLY in valid format.
+Return ONLY in valid JSON format.
 
 {format_instructions}
 
-NOTE:
-- Format: 
-  - need_to_remember: bool
-  - new_memories: list[str]
-- Each string = one atomic memory. No explanation.
+IMPORTANT:
+- Output MUST match the schema exactly
+- new_memories must be a list of objects:
+  {{
+    "memory": "...",
+    "memory_type": "..."
+  }}
 
 CURRENT USER DETAILS:
 {existing_memory}
@@ -382,24 +384,56 @@ CURRENT USER DETAILS:
 LAST CHAT:
 {last_msgs}
 
-Rules:
+---
 
-1. Decision:
-- Set need_to_remember = True ONLY if new long-term, reusable user info is present
-  (identity, preferences, goals, skills, projects, habits, constraints)
-- Otherwise set need_to_remember = False
-- Ignore temporary states, emotions, or one-time queries
+Decision Rules:
 
-2. Memory Extraction:
-- Extract ONLY NEW long-term user info
-- Expand shorthand if needed
-- DO NOT repeat or rephrase existing memories
-- Avoid duplicates
-- Keep each memory short and atomic
-- Only return new memories
+1. need_to_remember:
+- True ONLY if new long-term, reusable user info exists:
+  (preferences, goals, identity, habits, skills, projects, constraints, etc.)
+- Otherwise False
+- Ignore temporary, emotional, or one-time queries
 
-3. Consistency:
-- If need_to_remember = False → new_memories MUST be empty []
+---
+
+Memory Extraction Rules:
+
+- Extract ONLY NEW information (not in CURRENT USER DETAILS)
+- Each memory must be:
+  • atomic (one fact)
+  • short and normalized
+  • self-contained
+
+- Assign EXACTLY ONE memory_type from:
+  personal, habit, interests, goals, skills, dislikes, preferences,
+  learning_style, projects, tools, constraints, knowledge_level,
+  career, education, behavior, decisions, context, health
+
+- Do NOT:
+  • duplicate existing memory
+  • combine multiple facts
+  • add explanations
+
+---
+
+Consistency:
+
+- If need_to_remember = False → new_memories MUST be []
+- If True → MUST include at least one valid memory object
+
+---
+
+Example Output:
+
+{{
+  "need_to_remember": true,
+  "new_memories": [
+    {{
+      "memory": "User prefers short responses",
+      "memory_type": "preferences"
+    }}
+  ]
+}}
 """,
     input_variables=["existing_memory", "last_msgs"],
     partial_variables={
@@ -409,10 +443,12 @@ Rules:
 
     chain = prompt_template | llm | parser
 
-    decision = chain.invoke({
-        "existing_memory": existing_memory,
-        "last_msgs": last_msgs_context
-    })
+    decision = chain.invoke(
+        {
+            "existing_memory": existing_memory,
+            "last_msgs": last_msgs_context
+        }
+    )
 
 
 
@@ -423,9 +459,9 @@ Rules:
 
     
     new_unique_memories = [
-    mem.strip()
-    for mem in decision.new_memories
-    if mem.strip() and mem.strip() not in existing_set
+    mem
+    for mem in decision.new_memories.memory
+    if mem.memory.strip() and mem.memory.strip() not in existing_set
 ]
 
     if not new_unique_memories:
@@ -442,7 +478,12 @@ Rules:
             put_store.put(
                 namespace,
                 str(uuid4()),
-                {"data": mem, "date": dt[0], "time": dt[1]}
+                {
+                    "data": mem,
+                    "type":mem.memory_type,
+                    "date": dt[0],
+                    "time": dt[1]
+                    }
             )
 
     # 🔹 6. Return state unchanged + trace
