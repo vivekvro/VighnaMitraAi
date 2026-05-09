@@ -19,8 +19,7 @@ class UserDetails(TypedDict):
     user_id:str
     user_memory:Optional[str]
 class Retrieval_schema(TypedDict):
-    retrieval_type: str | list
-    uploaded_documents: List[Any]
+    rag_details: List[Any]
     user_memories: List[Any]
 
 class ChatBotState(BaseChatState):
