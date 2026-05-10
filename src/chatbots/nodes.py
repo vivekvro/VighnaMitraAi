@@ -14,8 +14,6 @@ from operator import add
 
 import dotenv
 from pydantic import BaseModel, Field
-from langchain_classic.tools import Tool
-from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.prompts import PromptTemplate
@@ -30,7 +28,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 # Local Project Imports
 from src.LLMs.load_llm import gpt_oss_120b, qwen3_32b
 from src.state import ChatBotState
-from src.rag.retrievers import load_vectorstore
+from src.rag.retrievers import load_vectorstore,embedding
 from src.configs.config_methods import load_config
 # =======================
 
@@ -99,15 +97,16 @@ def update_trace(state,node_name:str):
 
 
 
-#------------------- user memory ------------------------
+#------------------- fetch memory ------------------------
 
 
-def user_memory_node(state: ChatBotState,store: BaseStore):
-
+def init_system_msg(state: ChatBotState, store: BaseStore):
+    # Initialize the system message with basic user information,
+    # relevant memories, and core behavioral instructions for the LLM
+    # to guide the conversation from the very beginning.
     user_id = state["user_details"]["user_id"]
-    namespace = ("user",user_id,"details")
-
-    items = store.search()
+    ns = ("user",user_id,"details")
+    store.se
 
 
 
@@ -176,6 +175,10 @@ def chat_node(state: ChatBotState):
     trace = update_trace(state,"Chat Node")
     last_summarized_index = state['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
+    existing_memory = state['user_details']['user_memory']
+
+
+
 
     # user_id = state['user_details']["user_id"]
     # namespace = ("user", user_id, "details")
@@ -187,12 +190,12 @@ def chat_node(state: ChatBotState):
 
     messages = []
 
-    # # system
-    # messages.append(SystemMessage(
-    #     content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
-    #         user_details_content=existing_memory
-    #     )
-    # ))
+    # system
+    messages.append(SystemMessage(
+        content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
+            user_details_content=existing_memory
+        )
+    ))
 
     if state.get('summary'):
         messages.append(SystemMessage(
@@ -348,7 +351,7 @@ def remember_node(state: ChatBotState, store: BaseStore):
     ]
 
     existing_memory = "\n".join(existing_list) if existing_list else "(empty)"
-    existing_set = set(existing_list)  
+    existing_set = set(existing_list)
 
     # 🔹 2. Prepare last messages context
     last_msgs = state["messages"][-6:]
@@ -472,14 +475,20 @@ Example Output:
 
 
     dt= get_current_date()
-    with PostgresStore.from_conn_string(DB_POSTGRESSTORE_PATH) as put_store:
+    with PostgresStore.from_conn_string(
+        DB_POSTGRESSTORE_PATH,
+        index={
+        "embed": embedding,
+        "dims": 1024
+    }
+        ) as put_store:
         put_store.setup()
         for mem in new_unique_memories:
             put_store.put(
                 namespace,
                 str(uuid4()),
                 {
-                    "data": mem,
+                    "data": mem.memory,
                     "type":mem.memory_type,
                     "date": dt[0],
                     "time": dt[1]
@@ -490,248 +499,109 @@ Example Output:
     return {"trace": update_trace(state, "Remember Node")}
 
 
-
-
-
-
-
-
-
-
-
-
 #-----------------Retriever-node------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class RetrievalDecision(BaseModel):
-    requires_retrieval: bool = Field(description="""
-Return True if the user's query requires retrieving information from a knowledge base,
-uploaded documents/url, or vector database (RAG).
-
-Return False if the query can be answered using:
-- general knowledge
-- reasoning or logic
-- latest info (if not from uploaded documents)
-- conversation
-- tool usage (calculations, API calls, etc.)
-""")
-
-    search_query: Optional[str] = Field(
-        default=None,
-        description="""
-Provide a clear, optimized query for similarity search ONLY if need_retriever = True.
-
-Rules:
-- Rewrite the user query to be specific and retrieval-friendly
-- Remove unnecessary words
-- Keep key entities, topics, and intent
-- If need_retriever = False → return null
-"""
-    )
-    retrieval_mode : Literal["similarity","mmr"]="similarity"
-    num_docs: int = Field(
-    default=7,
-    ge=4,
-    le=12,
-    description="""
-        Number of documents to retrieve from the vector store.
-
-        Guidelines:
-        - Lower values (4-6): for simple, precise queries (faster, less noise)
-        - Medium values (7-9): for explanatory or moderately complex queries
-        - Higher values (10-12): for complex, multi-part, or ambiguous queries
-
-        The value should balance recall (more context) and precision (less noise).
-        Avoid unnecessary high values unless the query clearly requires broader context.
-"""
-)
-
-def retriever_node(state: ChatBotState,config: RunnableConfig):
-
-    message = state['messages'][-1].content
-
-    parser = PydanticOutputParser(pydantic_object=RetrievalDecision)
-
-    conditionprompt = PromptTemplate(
-    template="""
-Return ONLY in valid format.
-
-{format_instructions}
-
-USER QUERY:
-{user_query}
-
-Task:
-Decide whether retrieval (RAG) is STRICTLY required.
-
-Be conservative: prefer False unless retrieval is clearly necessary.
-
----
-
-Decision Rules:
-
-Set need_retriever = True ONLY if:
-- The query explicitly depends on:
-  • user-uploaded documents
-  • stored memory / vector database
-  • past information NOT present in the current chat
-- OR the user refers to something like:
-  • "my notes", "uploaded file", "document", "earlier data", etc.
-
-Set need_retriever = False if the query can be answered using:
-- general knowledge (ML, coding, concepts, etc.)
-- reasoning or logic
-- normal conversation
-- tools (math, APIs, etc.)
-- recent/general world knowledge
-- anything already available in current messages
-
----
-
-Query Rewriting (ONLY if need_retriever = True):
-- Rewrite into a short, precise retrieval query
-- Keep only key entities and intent
-- Remove filler words
-- Do NOT add new information
-
----
-
-Consistency Rules:
-- If need_retriever = False → search_query MUST be null
-- If unsure → return False
-
----
-
-Examples:
-
-User: "What did I upload about transformers?"
-→ need_retriever: True
-→ search_query: (Generate a concise, optimized query capturing the topic and source. Do NOT copy this example.)
-
-User: "Summarize my project details from memory"
-→ need_retriever: True
-→ search_query: (Generate a focused query about user's stored project details. Do NOT copy this example.)
-
-User: "Explain gradient descent"
-→ need_retriever: False
-→ search_query: null
-
-User: "2 + 2"
-→ need_retriever: False
-→ search_query: null
-
-User: "What's the capital of France?"
-→ need_retriever: False
-→ search_query: null
-""",
-        input_variables=["user_query"],
-        partial_variables={
-            "format_instructions": parser.get_format_instructions()
-        },
-    )
-    chain = conditionprompt | llm | parser 
-    conditionresponse = chain.invoke({"user_query":message})
-
-    if not conditionresponse.requires_retrieval:
-        return state
-
-
-
-
-
-
-
-    trace =  update_trace(state,"Retriever Node")
-    user_id = config['configurable']['user_id']
-    tool_id = f"retriever_id_{uuid4()}"
-    num_docs = conditionresponse.num_docs
-    retrieval_mode = conditionresponse.retrieval_mode
-    
-    search_query = conditionresponse.search_query
-    if not search_query:
-        search_query_prompt  = f"""Convert the user's query into an optimized semantic search query for a vector database.
-Instructions:
-- Extract main topic, subtopics, and intent
-- Add relevant technical/contextual keywords if missing
-- Keep it short (5-15 words)
-- No full sentences, no explanations
-
-User Query: {message}
-
-Search Query:
-"""
-        response = llm.invoke(search_query_prompt)
-        search_query = response.content
-    
-    vectorstore = load_vectorstore(user_id)
-    if vectorstore is None:
-        return {"messages":[ToolMessage(
-            content='No Douments uploaded by user',
-            tool_name="retriever",
-            tool_call_id=tool_id)],"trace":trace}
-    retriever = vectorstore.as_retriever(
-        search_type=retrieval_mode,
+def rag_result(vector_store,search_query,top_k,search_type,source):
+    if source:
         search_kwargs={
-            "k": num_docs
-            }
-        )
-    docs = retriever.invoke(search_query)
-    if not docs:
-        return {
-            "messages": [
-                ToolMessage(content="Not enough info related to this. Could you provide a relevant document so I can help better?",
-                tool_name="retriever",
-                tool_call_id=tool_id)],
-            "trace": trace
+            "k":top_k or 8,
+            "filter":{
+                "source": source
         }
-    
-    fetched_context = "\n\n".join([doc.page_content for doc in docs])
-
-    prompt = """
-        You are a helpful AI assistant using Retrieval-Augmented Generation (RAG).
-
-        You MUST answer ONLY using the provided context.
-
-        Context:
-        {context}
-
-        User Query:
-        {query}
-
-        Instructions:
-        - Answer based strictly on context.
-        - If answer is not found, say: "I don't have enough information."
-        - If the context is insufficient, respond: "Not enough info related to this. Could you provide a relevant document so I can help better?"
-        - Do NOT hallucinate.
-        - Keep answer clear and concise.
-        - If useful, structure answer in points.
-
-        Final Answer:
-            """
-    response = llm.invoke(prompt.format(context=fetched_context,query=search_query))
-    return {"messages":[
-                ToolMessage(
-                    content=response.content,
-                    tool_name="retriever",
-                    tool_call_id=tool_id
-                )],
-            "trace":trace
+    }
+    else:
+        search_kwargs={
+            "k":top_k or 8
             }
+    retriever = vector_store.as_retriever(
+        search_type=search_type,
+        search_kwargs=search_kwargs
+    )
+    result_docs = retriever.invoke(search_query)
+    retrieved_content = "\n".join([doc.page_content for doc in result_docs])
+    prompt = f"""
+You are given:
+1. A user query
+2. Retrieved content from uploaded documents
+
+Your task:
+- Analyze whether the retrieved content is actually relevant to the user's query.
+- If the retrieved content contains useful information related to the query, provide a clear and concise answer using only the retrieved information.
+- If the retrieved content is unrelated, weakly related, noisy, or does not contain enough useful information to answer the query, then return exactly:
+
+"No information related to your query is available in the uploaded documents."
+
+User Query:
+{search_query}
+
+Retrieved Content:
+{retrieved_content}
+
+Answer:
+"""
+    res = llm_summarizer.invoke(prompt)
+    return res.content
 
 
+
+
+
+def retriever_node(state: ChatBotState):
+    user_id = state['user_details']['user_id']
+    query_list = state['retrieval_details']['rag_details']
+    user_msg = state['retrieval_details']['user_msg']
+
+    vector_store = load_vectorstore(user_id)
+    if not vector_store:
+        return {
+            "messages":[ToolMessage(content="No vector store available",tool_calls_id=f"tool_id_{uuid4()}")]
+        }
+    query_list_result = []
+    for query in query_list:
+        result_rag = rag_result(
+            vector_store=vector_store,
+            search_type=query.retrieval_mode,
+            search_query=query.search_query,
+            source=query.filter_by_source,
+            top_k=query.num_docs)
+        query_list_result.append(f"Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}")
+    total_results = "\n\n".join(query_list_result)
+    prompt = f"""
+You are a retrieval consolidation system.
+
+You are given:
+1. The user's original query
+2. Multiple RAG retrieval results generated from uploaded documents
+
+Your task:
+- Analyze all retrieval results together
+- Identify useful, relevant, and non-contradictory information
+- Combine related information into a single coherent response
+- Ignore duplicate, noisy, weakly related, or irrelevant retrieval outputs
+- Prefer information that directly answers the user's query
+- Keep the final response concise but complete
+
+Important Rules:
+- Use ONLY information present in the RAG results
+- Do NOT invent or assume missing information
+- Do NOT mention retrieval systems, chunks, embeddings, or vector stores
+- Do NOT mention which query retrieved which information
+- If multiple retrievals contain overlapping information, merge them naturally
+- If ALL retrieval results indicate missing/unrelated information, return exactly:
+
+"No information related to your query is available in the uploaded documents."
+
+User Original Query:
+{user_msg}
+
+RAG Retrieval Results:
+{total_results}
+
+Final Consolidated Answer:
+"""
+    response = llm.invoke(prompt)
+    return {
+        "messages":[response]
+    }
 
 if __name__=="__main__":
     print(tools_list)

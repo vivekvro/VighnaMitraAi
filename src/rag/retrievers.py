@@ -1,19 +1,10 @@
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from typing import Annotated,List
-from langchain_core.documents import Document
-from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnableLambda,RunnablePassthrough
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_classic.chains.retrieval_qa.base import RetrievalQA
-from src.rag.DocumentsLoader import DocLoader
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
-import os
 
-embedding = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en")
+embedding = HuggingFaceBgeEmbeddings()
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 VECTORSTORE_DIR_PATH = BASE_DIR / "data" / "vectorstore"
