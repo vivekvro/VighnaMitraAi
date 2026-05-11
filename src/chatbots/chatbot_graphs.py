@@ -18,19 +18,11 @@ from src.chatbots.nodes import (
     tool_node,
     summarize_conversation,
     retriever_node,
-    remember_pass_node,
 )
-from src.chatbots.node_condtions import (
-    need_rag_condition,
-    need_remember_condition,
-)
-
-
-
-
-
-
-
+from src.chatbots.node_conditions import (
+        MemoryCondition
+    )
+# --------------------------------------------------------------------------------------
 
 dotenv.load_dotenv()
 
@@ -60,9 +52,10 @@ async def base_chatbot():
     builder_graph.add_node("retriever_node", retriever_node)
 
     # ✅ RAG routing
-    builder_graph.add_conditional_edges(START, need_rag_condition, {
-        True: "retriever_node",
-        False: "chat_node"
+    builder_graph.add_conditional_edges(START, MemoryCondition, {
+        "uploaded_documents": "retriever_node",
+        "user_memories":"user_memory_node",
+        "chat_node": "chat_node"
     })
 
     # ✅ Tool routing

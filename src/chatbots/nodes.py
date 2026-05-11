@@ -99,30 +99,6 @@ def update_trace(state,node_name:str):
 
 #------------------- fetch memory ------------------------
 
-
-def init_system_msg(state: ChatBotState, store: BaseStore):
-    # Initialize the system message with basic user information,
-    # relevant memories, and core behavioral instructions for the LLM
-    # to guide the conversation from the very beginning.
-    user_id = state["user_details"]["user_id"]
-    ns = ("user",user_id,"details")
-    store.se
-
-
-
-
-
-
-
-
-
-#-------------Chat-node-----------------------------
-
-
-
-
-
-
 SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant).
 
     Basic info:
@@ -171,31 +147,179 @@ SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant)
     {user_details_content}
 """
 
+
+
+
+def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,store: BaseStore):
+    items =  store.search(
+        namespace,
+        query=search_query,
+        filter={
+            "type": filter_by_type
+            })
+    fetch_data = "\n".join([f"- {mem.value['data']}" for mem in items  ])if items else "(No Memory exist)"
+    return f"({filter_by_type})\n" +fetch_data
+
+
+
+
+def init_system_msg(state: ChatBotState, store: BaseStore):
+    # Initialize the system message with basic user information,
+    # relevant memories, and core behavioral instructions for the LLM
+    # to guide the conversation from the very beginning.
+    user_id = state["user_details"]["user_id"]
+    namespace = ("user",user_id,"details")
+    memory_queries = {
+        "personal": [
+        "What is the user's name?",
+        "What basic personal details are known about the user?",
+        "What important identity-related info is available about the user?"
+    ],
+
+    "habit": [
+        "What are the user's daily habits or routines?",
+        "What recurring behaviors does the user follow?",
+        "What productivity or study habits does the user have?"
+    ],
+
+    "interests": [
+        "What topics is the user interested in?",
+        "What technologies or fields does the user enjoy learning?",
+        "What hobbies or interests does the user have?"
+    ],
+
+    "goals": [
+        "What are the user's current goals?",
+        "What career or learning goals does the user have?",
+        "What is the user trying to achieve?"
+    ],
+
+    "skills": [
+        "What skills does the user already have?",
+        "What technical skills is the user learning?",
+        "What tools or technologies is the user skilled in?"
+    ],
+
+    "dislikes": [
+        "What does the user dislike?",
+        "What types of responses or behaviors does the user prefer to avoid?",
+        "What recommendations should not be repeated?"
+    ],
+
+    "preferences": [
+        "What communication preferences does the user have?",
+        "What response style does the user prefer?",
+        "What formatting or explanation preferences does the user have?"
+    ],
+
+    "learning_style": [
+        "How does the user prefer to learn?",
+        "Does the user prefer hints, examples, or direct answers?",
+        "What teaching style works best for the user?"
+    ],
+
+    "projects": [
+        "What projects is the user currently working on?",
+        "What ongoing technical or academic projects does the user have?",
+        "What project context is important to remember?"
+    ],
+
+    "tools": [
+        "What tools, frameworks, or libraries does the user use?",
+        "What software stack is the user familiar with?",
+        "What development tools does the user prefer?"
+    ],
+
+    "constraints": [
+        "What limitations or constraints does the user have?",
+        "Are there any important restrictions for recommendations or solutions?",
+        "What constraints should responses consider?"
+    ],
+
+    "knowledge_level": [
+        "What is the user's current knowledge level?",
+        "What subjects is the user beginner/intermediate/advanced in?",
+        "What technical depth is appropriate for the user?"
+    ],
+
+    "career": [
+        "What career path is the user pursuing?",
+        "What job roles is the user targeting?",
+        "What professional goals does the user have?"
+    ],
+
+    "education": [
+        "What is the user's educational background?",
+        "What is the user currently studying?",
+        "What academic information is relevant about the user?"
+    ],
+
+    "behavior": [
+        "What behavioral patterns are known about the user?",
+        "How does the user usually interact or make decisions?",
+        "What interaction habits are useful to remember?"
+    ],
+
+    "decisions": [
+        "What important decisions has the user already made?",
+        "What preferences or choices should remain consistent?",
+        "What past decisions affect future responses?"
+    ],
+
+    "context": [
+        "What ongoing context should be remembered about the user?",
+        "What recent important information is relevant?",
+        "What situational context helps personalize responses?"
+    ],
+
+    "health": [
+        "Are there any health-related preferences or limitations mentioned by the user?",
+        "What wellness or lifestyle context is relevant for responses?",
+        "Are there any important health considerations to remember?"
+    ]
+}
+    all_memories = []
+
+    for key, queries in memory_queries.items():
+        
+        search_query = " ".join(queries)
+
+        result = get_BasicMemories(
+            namespace=namespace,
+            filter_by_type=key,
+            search_query=search_query,
+            store=store
+        )
+
+        all_memories.append(result)
+
+    total_memories = "\n\n".join(all_memories)
+    system_message = SYSTEM_PROMPT_TEMPLATE.format(
+        datetime=get_current_date()[0],
+        user_id=user_id,
+        user_details_content=total_memories
+        )
+
+    return {
+        'system_message':SystemMessage(
+            content=system_message
+        )
+    }
+
+
+#------------------------ Chat node -----------------------------
+
 def chat_node(state: ChatBotState):
     trace = update_trace(state,"Chat Node")
     last_summarized_index = state['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
     existing_memory = state['user_details']['user_memory']
-
-
-
-
-    # user_id = state['user_details']["user_id"]
-    # namespace = ("user", user_id, "details")
-    # items = store.search(namespace)
-
-    # existing_memory = "\n".join(
-    #     f"- {it.value.get('data','')}" for it in items
-    # ) if items else "(empty)"
+    system_message = state['system_message']
 
     messages = []
 
     # system
-    messages.append(SystemMessage(
-        content=SYSTEM_PROMPT_TEMPLATE.format(datetime=" ".join(get_current_date()),user_id=state['user_id'],
-            user_details_content=existing_memory
-        )
-    ))
+    messages.append(system_message)
 
     if state.get('summary'):
         messages.append(SystemMessage(
@@ -212,10 +336,7 @@ def chat_node(state: ChatBotState):
         "trace": trace
     }
 
-
-#------------------------ Conversation summary Node-------------------------
-
-
+#------------------------ summary Node ---------------------------
 
 def summarize_conversation(state: ChatBotState):
     last_summarized_index = state['summary']['summary_end_index']
@@ -265,11 +386,8 @@ def summarize_conversation(state: ChatBotState):
         }
     else:
         return state
- 
-
 
 #------------------memory-node-----------------------------
-
 class NewMemoryDetails(BaseModel):
     memory:str = Field(default_factory=str,description="Only new long-term memory,No explanation.")
     memory_type: Literal[
@@ -307,7 +425,6 @@ Rules:
 - Avoid storing sensitive data unless explicitly allowed (especially for "health").
 """)
 
-
 class MemoryDecision(BaseModel):
     need_to_remember :bool= Field(description="""
 Return True only if the conversation includes persistent, reusable information(e.g., preferences, identity, goals, constraints, or important context).
@@ -333,8 +450,6 @@ Formatting:
 
 If no valid memory is found, return an empty list.
 """)
-
-
 
 def remember_node(state: ChatBotState, store: BaseStore):
 
@@ -497,8 +612,6 @@ Example Output:
 
     # 🔹 6. Return state unchanged + trace
     return {"trace": update_trace(state, "Remember Node")}
-
-
 #-----------------Retriever-node------------------------------------------------
 def rag_result(vector_store,search_query,top_k,search_type,source):
     if source:
@@ -540,10 +653,6 @@ Answer:
 """
     res = llm_summarizer.invoke(prompt)
     return res.content
-
-
-
-
 
 def retriever_node(state: ChatBotState):
     user_id = state['user_details']['user_id']

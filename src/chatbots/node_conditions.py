@@ -318,7 +318,6 @@ Examples:
 - "What are my learning preferences?"
 - "Search my uploaded documents for transformers"
 
-
 When Retrieval is NOT Required
 ----------------
 Set requires_retrieval = False when the query can be answered using:
@@ -339,7 +338,6 @@ Examples:
 - "Write a FastAPI example"
 - "Hello"
 
-
 Retrieval Types
 ----------------
 
@@ -359,7 +357,6 @@ Rules:
 - Prefer similarity for precise retrieval
 - Prefer mmr for broader or diverse retrieval
 
-
 2. user_memories
 Use when personalization or past user context is needed.
 
@@ -377,8 +374,6 @@ Rules:
 - Each retrieval object should focus on ONE memory category
 - Prefer multiple focused retrieval plans over broad retrieval
 - Keep memory queries short and intent-focused
-
-
 
 General Rules
 ----------------
