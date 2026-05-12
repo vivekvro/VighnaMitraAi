@@ -13,11 +13,13 @@ from langgraph.prebuilt import tools_condition
 # Local
 from src.state import ChatBotState
 from src.chatbots.nodes import (
+    init_SystemMessage,
     chat_node,
     remember_node,
     tool_node,
     summarize_conversation,
     retriever_node,
+    retrieve_user_memory_node,
 )
 from src.chatbots.node_conditions import (
         MemoryCondition
@@ -44,17 +46,18 @@ async def base_chatbot():
     # ✅ Build graph
     builder_graph = StateGraph(ChatBotState)
 
+    builder_graph.add_node("init_SystemMessage", init_SystemMessage)
     builder_graph.add_node("chat_node", chat_node)
     builder_graph.add_node("tools", tool_node)
     builder_graph.add_node("summarize_node", summarize_conversation)
-    builder_graph.add_node("remember_pass_node", remember_pass_node)
     builder_graph.add_node("remember_node", remember_node)
     builder_graph.add_node("retriever_node", retriever_node)
+    builder_graph.add_node("retrieve_user_memory_node", retrieve_user_memory_node)
 
     # ✅ RAG routing
     builder_graph.add_conditional_edges(START, MemoryCondition, {
         "uploaded_documents": "retriever_node",
-        "user_memories":"user_memory_node",
+        "user_memories":"retrieve_user_memory_node",
         "chat_node": "chat_node"
     })
 
@@ -65,13 +68,7 @@ async def base_chatbot():
     })
 
     builder_graph.add_edge("tools", "chat_node")
-    builder_graph.add_edge("summarize_node", "remember_pass_node")
-
-    # ✅ Memory decision routing
-    builder_graph.add_conditional_edges("remember_pass_node", need_remember_condition, {
-        "need_to_remember": "remember_node",
-        "no_need_to_remember": END
-    })
+    builder_graph.add_edge("summarize_node", "re")
 
     builder_graph.add_edge("retriever_node", "chat_node")
 

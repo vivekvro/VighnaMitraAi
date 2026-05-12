@@ -11,13 +11,9 @@ from src.state import ChatBotState
 from src.LLMs.load_llm import gpt_oss_120b
 
 
-
-
-
 llm = gpt_oss_120b()
 
 #-------Memory_fetcher_condition------------
-
 class FetchUserMemoryDetails(BaseModel):
     search_query:str = Field(
         description="""
@@ -110,7 +106,6 @@ Examples:
     - 7-10: explanatory or moderate complexity
     - 11-15: broad or multi-step reasoning
     """)
-
 
 class MemoryCondition_decisions(BaseModel):
     requires_retrieval: bool = Field(
@@ -249,13 +244,9 @@ Return null when document retrieval is unnecessary.
 """
     )
 
-
-
-
-
-
 def MemoryCondition(state:ChatBotState):
     messages = state['messages']
+    system_message = state['system_message']
     summary = state['summary']['summary_content']
     parser = PydanticOutputParser(pydantic_object=MemoryCondition_decisions)
     if len(messages)>1 and not summary:
@@ -396,6 +387,12 @@ Additionally:
 
 {format_instructions}
 
+
+
+system_message:
+{system_message}
+if information is available in system message then do not go for any retrieval and just answer the query based on system message information and conversation context without any retrieval.
+
 Conversation:
 {conversation}
 
@@ -404,6 +401,7 @@ Latest User Query:
 """,
     input_variables=[
         "conversation",
+        "system_message",
         "query"
     ],
     partial_variables={
@@ -412,7 +410,7 @@ Latest User Query:
 )
     chain = prompt | llm | parser
     response = chain.invoke({
-            "conversation":conversation,
+            "conversation":conversation,'system_message':system_message,
             "query":messages[-1].content})
     
     if response.requires_retrieval:

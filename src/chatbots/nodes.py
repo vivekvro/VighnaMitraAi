@@ -97,7 +97,7 @@ def update_trace(state,node_name:str):
 
 
 
-#------------------- fetch memory ------------------------
+#------------------- init System Message memory ------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant).
 
@@ -150,10 +150,11 @@ SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant)
 
 
 
-def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,store: BaseStore):
+def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_docs:int,store: BaseStore):
     items =  store.search(
         namespace,
         query=search_query,
+        limit=num_docs,
         filter={
             "type": filter_by_type
             })
@@ -163,7 +164,7 @@ def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,store
 
 
 
-def init_system_msg(state: ChatBotState, store: BaseStore):
+def init_SystemMessage(state: ChatBotState, store: BaseStore):
     # Initialize the system message with basic user information,
     # relevant memories, and core behavioral instructions for the LLM
     # to guide the conversation from the very beginning.
@@ -288,6 +289,7 @@ def init_system_msg(state: ChatBotState, store: BaseStore):
             namespace=namespace,
             filter_by_type=key,
             search_query=search_query,
+            num_docs=5,
             store=store
         )
 
@@ -319,7 +321,7 @@ def chat_node(state: ChatBotState):
     messages = []
 
     # system
-    messages.append(system_message)
+    messages.extend(system_message)
 
     if state.get('summary'):
         messages.append(SystemMessage(
@@ -387,7 +389,7 @@ def summarize_conversation(state: ChatBotState):
     else:
         return state
 
-#------------------memory-node-----------------------------
+#------------------Remember-node-----------------------------
 class NewMemoryDetails(BaseModel):
     memory:str = Field(default_factory=str,description="Only new long-term memory,No explanation.")
     memory_type: Literal[
@@ -612,7 +614,8 @@ Example Output:
 
     # 🔹 6. Return state unchanged + trace
     return {"trace": update_trace(state, "Remember Node")}
-#-----------------Retriever-node------------------------------------------------
+#-----------------Retriever-nodes------------------------------------------------
+#  docs
 def rag_result(vector_store,search_query,top_k,search_type,source):
     if source:
         search_kwargs={
@@ -710,6 +713,40 @@ Final Consolidated Answer:
     response = llm.invoke(prompt)
     return {
         "messages":[response]
+    }
+
+# user memories
+def retrieve_user_memory_node(state: ChatBotState, store: BaseStore):
+    query_list = state["retrieval_details"]['user_memories']
+    main_query = state['retrieval_details']['user_msg']
+    user_id = state['user_details']['user_id']
+    namespace = ("user", user_id, "details")
+    query_results = []
+    for query in query_list:
+        fetched_result = get_BasicMemories(
+            namespace=namespace,
+            filter_by_type=query.filter_by_type,
+            search_query=query.search_query,
+            num_docs=query.num_docs,
+            store=store
+        )
+        query_results.append(fetched_result)
+    result = "\n\n".join(query_results)
+    result = f"""
+These are newly retrieved memories related to the current user query.
+
+User query:
+"{main_query}"
+
+Retrieved memories:
+{result}
+
+Use these memories only if they are helpful and relevant for answering the user query.
+If the retrieved memories seem unrelated or not useful, ignore them.
+"""
+    update_system_msg = state["system_message"]+[SystemMessage(content=result)]
+    return {
+        "system_message": update_system_msg
     }
 
 if __name__=="__main__":

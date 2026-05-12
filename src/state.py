@@ -8,7 +8,7 @@ from src.chatbots.node_conditions import FetchUploadedDocsDetails,FetchUserMemor
 
 
 class BaseChatState(TypedDict):
-    system_message:SystemMessage
+    system_message:List[SystemMessage]
     messages:Annotated[List[BaseMessage],add_messages]
 
 class SummaryState(TypedDict):
