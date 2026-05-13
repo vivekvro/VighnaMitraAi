@@ -1,4 +1,5 @@
 from langchain_groq import ChatGroq
+from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 def llama_3_3_70b_versatile(temperature=0.7):
     load_dotenv()
@@ -15,3 +16,7 @@ def gpt_oss_20b(temperature=0.7):
 def qwen3_32b(temperature=0.7):
     load_dotenv()
     return ChatGroq(model="qwen/qwen3-32b",temperature=temperature)
+
+def gemma4_e4b(temperature=0.7):
+    load_dotenv()
+    return ChatOllama(model="gemma4:e4b",temperature=temperature)

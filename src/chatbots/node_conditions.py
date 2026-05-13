@@ -5,7 +5,7 @@ from typing import Literal,Optional,List,Set
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 # Local
 from src.state import ChatBotState
 from src.LLMs.load_llm import gpt_oss_120b

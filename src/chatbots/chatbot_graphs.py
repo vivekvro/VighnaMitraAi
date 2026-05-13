@@ -48,7 +48,7 @@ async def base_chatbot():
 
     builder_graph.add_node("init_SystemMessage", init_SystemMessage)
     builder_graph.add_node("chat_node", chat_node)
-    builder_graph.add_node("tools", tool_node)
+    builder_graph.add_node("tool_node", tool_node)
     builder_graph.add_node("summarize_node", summarize_conversation)
     builder_graph.add_node("remember_node", remember_node)
     builder_graph.add_node("retriever_node", retriever_node)
@@ -60,17 +60,18 @@ async def base_chatbot():
         "user_memories":"retrieve_user_memory_node",
         "chat_node": "chat_node"
     })
+    
+    builder_graph.add_edge("retriever_node", END)
 
     # ✅ Tool routing
     builder_graph.add_conditional_edges("chat_node", tools_condition, {
-        "tools": "tools",
+        "tools": "tool_node",
         "__end__": "summarize_node"
     })
 
-    builder_graph.add_edge("tools", "chat_node")
-    builder_graph.add_edge("summarize_node", "re")
+    builder_graph.add_edge("tool_node", "chat_node")
+    builder_graph.add_edge("summarize_node", "remember_node")
 
-    builder_graph.add_edge("retriever_node", "chat_node")
 
     # ✅ Async SQLite checkpoint
     conn = await connect("data/vighnamitraai.db", check_same_thread=False)

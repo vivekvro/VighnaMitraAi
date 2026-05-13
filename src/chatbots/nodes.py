@@ -4,58 +4,34 @@ import os
 import asyncio
 import datetime
 from uuid import uuid4
-from typing import List, Annotated,Optional,Literal
+from typing import List,Optional,Literal
 from operator import add
-
-
-
-
 # Third-party Libraries
-
 import dotenv
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-
 from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
-
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
 # Local Project Imports
-from src.LLMs.load_llm import gpt_oss_120b, qwen3_32b
+from src.LLMs.load_llm import gpt_oss_120b, gemma4_e4b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding
 from src.configs.config_methods import load_config
 # =======================
-
-
-
-
-
-
 def get_current_date():
     return str(datetime.datetime.today()).split(" ")
-
-
-
-
 dotenv.load_dotenv()
-
-
 DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
+
+
 #----------------LLMs Setups -------------------------
-
-
-
-llm_summarizer = qwen3_32b()
+llm_summarizer = gemma4_e4b()
 llm = gpt_oss_120b()
-
-
-
 #-----------------------------------------------
 #get tools
 async def get_tools():
@@ -67,7 +43,6 @@ async def get_tools():
     tools = await client.get_tools()
     return tools
 
-
 def load_tools_sync():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -78,17 +53,7 @@ tools_list = load_tools_sync()
 llm_with_tools = llm.bind_tools(tools=tools_list)
 
 #-----------------------ToolNode------------------------------------
-
-
-
-
 tool_node = ToolNode(tools=tools_list)
-
-
-
-
-
-
 #------------------- trace  ---------------------
 
 
@@ -315,7 +280,6 @@ def chat_node(state: ChatBotState):
     trace = update_trace(state,"Chat Node")
     last_summarized_index = state['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
-    existing_memory = state['user_details']['user_memory']
     system_message = state['system_message']
 
     messages = []
@@ -560,37 +524,23 @@ Example Output:
         "format_instructions": parser.get_format_instructions()
     },
 )
-
     chain = prompt_template | llm | parser
-
     decision = chain.invoke(
         {
             "existing_memory": existing_memory,
             "last_msgs": last_msgs_context
         }
     )
-
-
-
     if not decision.need_to_remember:
         return state
-    
-
-
     
     new_unique_memories = [
     mem
     for mem in decision.new_memories.memory
     if mem.memory.strip() and mem.memory.strip() not in existing_set
 ]
-
     if not new_unique_memories:
         return state
-
-
-
-
-
     dt= get_current_date()
     with PostgresStore.from_conn_string(
         DB_POSTGRESSTORE_PATH,
@@ -661,6 +611,7 @@ def retriever_node(state: ChatBotState):
     user_id = state['user_details']['user_id']
     query_list = state['retrieval_details']['rag_details']
     user_msg = state['retrieval_details']['user_msg']
+    system_message = state['system_message']
 
     vector_store = load_vectorstore(user_id)
     if not vector_store:
@@ -677,7 +628,7 @@ def retriever_node(state: ChatBotState):
             top_k=query.num_docs)
         query_list_result.append(f"Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}")
     total_results = "\n\n".join(query_list_result)
-    prompt = f"""
+    system_message.append(SystemMessage(content=f"""
 You are a retrieval consolidation system.
 
 You are given:
@@ -709,8 +660,8 @@ RAG Retrieval Results:
 {total_results}
 
 Final Consolidated Answer:
-"""
-    response = llm.invoke(prompt)
+"""))
+    response = llm.invoke(system_message)
     return {
         "messages":[response]
     }
@@ -748,6 +699,9 @@ If the retrieved memories seem unrelated or not useful, ignore them.
     return {
         "system_message": update_system_msg
     }
+
+
+
 
 if __name__=="__main__":
     print(tools_list)
