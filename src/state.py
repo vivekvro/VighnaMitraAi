@@ -1,13 +1,13 @@
 from pydantic import Field
-from typing import TypedDict,Annotated,List,Optional
+from typing import TypedDict,Annotated,List,Optional,Any
 from langchain_core.messages import BaseMessage,SystemMessage
 from langgraph.graph.message import add_messages
-from src.chatbots.node_conditions import FetchUploadedDocsDetails,FetchUserMemoryDetails
+
 
 
 
 class BaseChatState(TypedDict):
-    system_message:List[SystemMessage]
+    system_messages:List[SystemMessage]
     messages:Annotated[List[BaseMessage],add_messages]
 
 class SummaryState(TypedDict):
@@ -19,12 +19,13 @@ class UserDetails(TypedDict):
     user_memory:Optional[str]
 class Retrieval_schema(TypedDict):
     user_msg:str
-    rag_details: List[FetchUploadedDocsDetails]
-    user_memories: List[FetchUserMemoryDetails]
+    rag_details: List[Any]
+    user_memories: List[Any]
 
 class ChatBotState(BaseChatState):
     summary:SummaryState
     retrieval_details:Optional[Retrieval_schema]
+    retriever_context_message:Optional[SystemMessage]
     user_details:UserDetails
     trace:List[str]=Field(
         default_factory=list,

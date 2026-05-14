@@ -3,9 +3,9 @@
     "command": "uv",
     "args": [
       "run",
-      "D:\\MCPs\\mcp_servers\\expense_tracker.py"
+      "D:/MCPs/mcp_servers/expense_tracker.py"
     ],
-    "cwd": "D:\\MCPs",
+    "cwd": "D:/MCPs",
     "transport": "stdio"
   }
 }

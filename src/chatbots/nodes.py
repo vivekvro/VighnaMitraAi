@@ -1,13 +1,11 @@
 # =======================
 # Standard Library
-import os
-import asyncio
-import datetime
+import os, asyncio, datetime, dotenv
 from uuid import uuid4
 from typing import List,Optional,Literal
-from operator import add
+
 # Third-party Libraries
-import dotenv
+ 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
@@ -17,6 +15,8 @@ from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+
 # Local Project Imports
 from src.LLMs.load_llm import gpt_oss_120b, gemma4_e4b
 from src.state import ChatBotState
@@ -34,26 +34,31 @@ llm_summarizer = gemma4_e4b()
 llm = gpt_oss_120b()
 #-----------------------------------------------
 #get tools
-async def get_tools():
+_tools_cache = None
+_llm_with_tools = None
+_tool_node = None
 
-    servers = await load_config()
+async def initialize_mcp_tools():
+    global _tools_cache, _llm_with_tools, _tool_node
 
-    client = MultiServerMCPClient(servers)
+    if _tools_cache is None:
+        servers = await load_config()
 
-    tools = await client.get_tools()
-    return tools
+        client = MultiServerMCPClient(servers)
 
-def load_tools_sync():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop.run_until_complete(get_tools())
+        _tools_cache = await asyncio.wait_for(
+            client.get_tools(),
+            timeout=20
+        )
 
-tools_list = load_tools_sync()
+        _llm_with_tools = llm.bind_tools(_tools_cache)
 
-llm_with_tools = llm.bind_tools(tools=tools_list)
+        _tool_node = ToolNode(tools=_tools_cache)
+
+    return _llm_with_tools, _tool_node
 
 #-----------------------ToolNode------------------------------------
-tool_node = ToolNode(tools=tools_list)
+
 #------------------- trace  ---------------------
 
 
@@ -134,6 +139,8 @@ def init_SystemMessage(state: ChatBotState, store: BaseStore):
     # relevant memories, and core behavioral instructions for the LLM
     # to guide the conversation from the very beginning.
     user_id = state["user_details"]["user_id"]
+    if state['system_messages']:
+        return state
     namespace = ("user",user_id,"details")
     memory_queries = {
         "personal": [
@@ -268,37 +275,40 @@ def init_SystemMessage(state: ChatBotState, store: BaseStore):
         )
 
     return {
-        'system_message':SystemMessage(
+        'system_messages': [SystemMessage(
             content=system_message
-        )
+        )]
     }
 
 
 #------------------------ Chat node -----------------------------
 
-def chat_node(state: ChatBotState):
+async def chat_node(state: ChatBotState):
     trace = update_trace(state,"Chat Node")
-    last_summarized_index = state['summary_end_index']
+    last_summarized_index = state['summary']['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
-    system_message = state['system_message']
+    system_message = state['system_messages']
 
     messages = []
 
     # system
     messages.extend(system_message)
+    if state.get("retriever_context_messages"):
+        messages.append(state["retriever_context_message"])
 
-    if state.get('summary'):
+    if state['summary']['summary_content']:
         messages.append(SystemMessage(
-            content=f"last Conversation Summary:\n{state['summary']}"
+            content=f"last Conversation Summary:\n{state['summary']['summary_content']}"
         ))
         messages.extend(last_messages)
     else:
         messages.extend(last_messages)
-
-    response =  llm_with_tools.invoke(messages)
+    llm_with_tools, _ = await initialize_mcp_tools()
+    response = await llm_with_tools.ainvoke(messages)
 
     return {
         "messages": [response],
+        "retriever_context_message": None,
         "trace": trace
     }
 
@@ -536,7 +546,7 @@ Example Output:
     
     new_unique_memories = [
     mem
-    for mem in decision.new_memories.memory
+    for mem in decision.new_memories
     if mem.memory.strip() and mem.memory.strip() not in existing_set
 ]
     if not new_unique_memories:
@@ -611,7 +621,7 @@ def retriever_node(state: ChatBotState):
     user_id = state['user_details']['user_id']
     query_list = state['retrieval_details']['rag_details']
     user_msg = state['retrieval_details']['user_msg']
-    system_message = state['system_message']
+    system_message = state['system_messages']
 
     vector_store = load_vectorstore(user_id)
     if not vector_store:
@@ -626,9 +636,9 @@ def retriever_node(state: ChatBotState):
             search_query=query.search_query,
             source=query.filter_by_source,
             top_k=query.num_docs)
-        query_list_result.append(f"Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}")
+        query_list_result.append(f"""Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}""")
     total_results = "\n\n".join(query_list_result)
-    system_message.append(SystemMessage(content=f"""
+    retriever_context_message = [SystemMessage(content=f"""
 You are a retrieval consolidation system.
 
 You are given:
@@ -660,10 +670,9 @@ RAG Retrieval Results:
 {total_results}
 
 Final Consolidated Answer:
-"""))
-    response = llm.invoke(system_message)
+""")]
     return {
-        "messages":[response]
+        "retriever_context_message" : retriever_context_message
     }
 
 # user memories
@@ -695,13 +704,7 @@ Retrieved memories:
 Use these memories only if they are helpful and relevant for answering the user query.
 If the retrieved memories seem unrelated or not useful, ignore them.
 """
-    update_system_msg = state["system_message"]+[SystemMessage(content=result)]
+    update_system_msg = state["system_messages"]+[SystemMessage(content=result)]
     return {
-        "system_message": update_system_msg
+        "system_messages": update_system_msg
     }
-
-
-
-
-if __name__=="__main__":
-    print(tools_list)

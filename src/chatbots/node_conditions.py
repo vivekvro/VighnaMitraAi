@@ -246,17 +246,14 @@ Return null when document retrieval is unnecessary.
 
 def MemoryCondition(state:ChatBotState):
     messages = state['messages']
-    system_message = state['system_message']
+    system_message = state['system_messages']
     summary = state['summary']['summary_content']
     parser = PydanticOutputParser(pydantic_object=MemoryCondition_decisions)
     if len(messages)>1 and not summary:
         conversation_msgs = messages[:-1]
         conversation = "\n".join(
     [
-        f'{
-            "human" if isinstance(msg, HumanMessage)
-            else "ai"
-        }: {msg.content}'
+        f"{'human' if isinstance(msg, HumanMessage) else 'ai'}: {msg.content}"
         for msg in conversation_msgs
         if isinstance(msg, (HumanMessage, AIMessage))
     ]
@@ -266,10 +263,7 @@ def MemoryCondition(state:ChatBotState):
         conversation_msgs = messages[last_idx:-1]
         conversation = "\n".join(
     [
-        f'{
-            "human" if isinstance(msg, HumanMessage)
-            else "ai"
-        }: {msg.content}'
+        f"{'human' if isinstance(msg, HumanMessage) else 'ai'}: {msg.content}"
         for msg in conversation_msgs
         if isinstance(msg, (HumanMessage, AIMessage))
     ]
@@ -414,21 +408,22 @@ Latest User Query:
             "query":messages[-1].content})
     
     if response.requires_retrieval:
-        if not response.user_msg:
+        if not response.user_query:
             state['retrieval_details']['user_msg'] = state['messages'][-1].content
-        state['retrieval_details']['user_msg'] = response.user_msg
+        else:
+            state['retrieval_details']['user_msg'] = response.user_query
         routes = []
         retrieval_type =response.retrieval_type or []
         if retrieval_type:
             if "user_memories" in retrieval_type:
                 if response.user_memories_retrieval_details:
                     state['retrieval_details']['user_memories'] = response.user_memories_retrieval_details
-                    routes.append("user_memory_retriever_node")
+                    routes.append("retrieve_user_memory_node")
 
-            elif "uploaded_documents" in retrieval_type:
+            if "uploaded_documents" in retrieval_type:
                 if response.uploaded_documents_retrieval_details:
                     state['retrieval_details']['rag_details'] = response.uploaded_documents_retrieval_details
-                    routes.append("rag")
+                    routes.append("retriever_node")
             else:
                 return "chat_node"
             if len(routes)==1:
@@ -437,5 +432,3 @@ Latest User Query:
 
     else:
         return "chat_node"
-
-

@@ -7,6 +7,7 @@ import datetime as dt
 from uuid import uuid4
 from sqlite3 import connect
 
+
 # Third-party
 import requests
 import streamlit as st
@@ -364,7 +365,7 @@ config = {"configurable":{
     }
 
 def get_messages(config):
-    state = chatbot.get_state(config=config)
+    state = asyncio.run(chatbot.aget_state(config=config))
     return state.values.get("messages", [])
 
 messages = get_messages(config)
@@ -387,23 +388,30 @@ def fake_stream_response(text:str):
 
 
 
-def get_chatbot_response(user_input:str,):
-    return chatbot.invoke({
-                "messages":[HumanMessage(content=user_input)],
-                "user_details":{
-                    "user_id":username,
-                    },
-                "trace":[]
-                },
+def get_chatbot_response(user_id:str,user_input:str,config: dict):
+    return asyncio.run(chatbot.ainvoke({
+        "messages":[HumanMessage(content=user_input)],
+        "system_messages": [],
+        "summary": {
+            "summary_content": "",
+            "summary_end_index": 0
+        },
+        "retrieval_details": None,
+        "user_details": {
+            "user_id": user_id,
+            "user_memory": None
+        },
+        "trace": []
+    },
                 config=config
-            )
+            ))
 
 
 if user_input:
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        result_state = get_chatbot_response(user_input)
+        result_state = get_chatbot_response(user_id=username,user_input=user_input,config=config)
 
     with st.chat_message(name="assistant"):
         if "trace" in result_state:

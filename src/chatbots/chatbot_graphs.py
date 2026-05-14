@@ -16,7 +16,7 @@ from src.chatbots.nodes import (
     init_SystemMessage,
     chat_node,
     remember_node,
-    tool_node,
+    initialize_mcp_tools,
     summarize_conversation,
     retriever_node,
     retrieve_user_memory_node,
@@ -46,6 +46,8 @@ async def base_chatbot():
     # ✅ Build graph
     builder_graph = StateGraph(ChatBotState)
 
+    _,tool_node = await initialize_mcp_tools()
+
     builder_graph.add_node("init_SystemMessage", init_SystemMessage)
     builder_graph.add_node("chat_node", chat_node)
     builder_graph.add_node("tool_node", tool_node)
@@ -54,23 +56,27 @@ async def base_chatbot():
     builder_graph.add_node("retriever_node", retriever_node)
     builder_graph.add_node("retrieve_user_memory_node", retrieve_user_memory_node)
 
-    # ✅ RAG routing
-    builder_graph.add_conditional_edges(START, MemoryCondition, {
-        "uploaded_documents": "retriever_node",
-        "user_memories":"retrieve_user_memory_node",
+    builder_graph.add_edge(START, "init_SystemMessage")
+    builder_graph.add_conditional_edges("init_SystemMessage", MemoryCondition, {
+        "retriever_node": "retriever_node",
+        "retrieve_user_memory_node":"retrieve_user_memory_node",
         "chat_node": "chat_node"
     })
     
-    builder_graph.add_edge("retriever_node", END)
+    
 
     # ✅ Tool routing
     builder_graph.add_conditional_edges("chat_node", tools_condition, {
         "tools": "tool_node",
         "__end__": "summarize_node"
     })
-
+    builder_graph.add_edge("retriever_node", "chat_node")
+    builder_graph.add_edge("retrieve_user_memory_node", "chat_node")
     builder_graph.add_edge("tool_node", "chat_node")
+    builder_graph.add_edge("chat_node", "summarize_node")
+
     builder_graph.add_edge("summarize_node", "remember_node")
+    builder_graph.add_edge("remember_node", END)
 
 
     # ✅ Async SQLite checkpoint
