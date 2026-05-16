@@ -20,3 +20,9 @@ def qwen3_32b(temperature=0.7):
 def gemma4_e4b(temperature=0.7):
     load_dotenv()
     return ChatOllama(model="gemma4:e4b",temperature=temperature)
+def llama3_8b(temperature=0.7):
+    load_dotenv()
+    return ChatOllama(model="llama3:8b",temperature=temperature)
+def qwen2_5_coder_7b(temperature=0.7):
+    load_dotenv()
+    return ChatOllama(model="qwen2-5-coder:7b",temperature=temperature)

@@ -15,8 +15,6 @@ from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
-
 # Local Project Imports
 from src.LLMs.load_llm import gpt_oss_120b, gemma4_e4b
 from src.state import ChatBotState
@@ -293,7 +291,7 @@ async def chat_node(state: ChatBotState):
 
     # system
     messages.extend(system_message)
-    if state.get("retriever_context_messages"):
+    if state.get("retriever_context_message"):
         messages.append(state["retriever_context_message"])
 
     if state['summary']['summary_content']:
